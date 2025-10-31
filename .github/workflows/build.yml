@@ -1,13 +1,14 @@
-name: Build FM26 Mod Manager
+name: Build & Release FM26 Mod Manager
 
 on:
   push:
     tags:
-      - "v*"
+      - "v*" # e.g., v0.4.0
   workflow_dispatch:
 
 jobs:
-  build:
+  pyinstaller-build:
+    name: Build (${{ matrix.os }})
     strategy:
       matrix:
         os: [windows-latest, macos-latest]
@@ -24,27 +25,94 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Build with PyInstaller
         run: |
-          if [[ "$RUNNER_OS" == "macOS" ]]; then
-            pyinstaller --clean --noconfirm \
-              --windowed \
-              --name "FM26 Mod Manager" \
-              --icon "src/assets/icon.icns" \
-              src/fm26_mod_manager_gui.py
-          else
-            pyinstaller --clean --noconfirm ^
-              --windowed ^
-              --onefile ^
-              --name "FM26 Mod Manager" ^
-              --icon "src/assets/icon.ico" ^
-              src/fm26_mod_manager_gui.py
-          fi
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        shell: bash
 
-      - name: Upload build artifact
+      - name: Build with PyInstaller (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          pyinstaller ^
+            --clean ^
+            --noconfirm ^
+            --windowed ^
+            --onefile ^
+            --name "FM26 Mod Manager" ^
+            --icon src\assets\icon.ico ^
+            src\fm26_mod_manager_gui.py
+        shell: cmd
+
+      - name: Build with PyInstaller (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          pyinstaller \
+            --clean \
+            --noconfirm \
+            --windowed \
+            --onefile \
+            --name "FM26 Mod Manager" \
+            --icon src/assets/icon.icns \
+            src/fm26_mod_manager_gui.py
+        shell: bash
+
+      # Package artifacts per-OS (zip the .app on macOS; rename exe on Windows)
+      - name: Package artifact (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          mkdir -p upload
+          copy "dist\FM26 Mod Manager.exe" "upload\FM26 Mod Manager-Windows.exe"
+        shell: cmd
+
+      - name: Package artifact (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p upload
+          # PyInstaller produces a .app bundle; zip it for upload
+          cd dist
+          zip -r "../upload/FM26 Mod Manager-macOS.zip" "FM26 Mod Manager.app"
+          cd ..
+        shell: bash
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}-build
-          path: dist/*
+          name: ${{ matrix.os == 'windows-latest' && 'FM26 Mod Manager (Windows)' || 'FM26 Mod Manager (macOS)' }}
+          path: upload/*
+
+  release:
+    name: Create GitHub Release
+    needs: pyinstaller-build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: FM26 Mod Manager (Windows)
+          path: artifacts/windows
+        continue-on-error: true
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: FM26 Mod Manager (macOS)
+          path: artifacts/macos
+        continue-on-error: true
+
+      - name: List downloaded files
+        run: |
+          echo "Windows artifacts:"; ls -lah artifacts/windows || true
+          echo "macOS artifacts:";   ls -lah artifacts/macos || true
+
+      - name: Create/Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/windows/FM26 Mod Manager-Windows.exe
+            artifacts/macos/FM26 Mod Manager-macOS.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
