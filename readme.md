@@ -105,7 +105,7 @@ When you enable mods and click **Apply Order**:
 
 - On Mac Systems, you may need to allow FMMLoader "App Management" permissions via System Preferences before it can make changes.
 <p align="center">
-  <img width="460"src=".github/appmgmtosx.png">
+  <img width="460"src=".github/appmgmt_osx.png">
 </p>
 ---
 
