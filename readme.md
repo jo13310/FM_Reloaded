@@ -103,6 +103,10 @@ When you enable mods and click **Apply Order**:
   - Football Manager is running.
   - There are file conflicts between mods.
 
+- On Mac Systems, you may need to allow FMMLoader "App Management" permissions via System Preferences before it can make changes.
+<p align="center">
+  <img width="460"src=".github/appmgmtosx.png">
+</p>
 ---
 
 ### 6️⃣ Rollback
