@@ -2,9 +2,7 @@
   <img width="460" height="300" src=".github/fmmloaderheader.png">
 </p>
 
-**A cross-platform mod manager** for *Football Manager 2026*, built to make installing, organizing, and troubleshooting mods easy — on both **macOS** and **Windows**.  
-
-Developed by [Justin Levine](https://justinlevine.me) / notJalco and presented with the great help of **The FM Match Lab Team**.
+**A cross-platform mod manager** for *Football Manager 2026*, built to make installing, organizing, and troubleshooting mods easy — on both **macOS** and **Windows**.  Developed by [Justin Levine](https://justinlevine.me) / notJalco and presented with the great help of **The FM Match Lab Team**.
 
 Join us on [Discord](https://discord.gg/QCW7QhWdAs) to discuss, ask questions, or contribute.
 
