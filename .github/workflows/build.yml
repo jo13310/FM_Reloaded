@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f src\requirements.txt ]; then pip install -r requirements.txt; fi
         shell: bash
 
       - name: Build with PyInstaller (Windows)
@@ -51,7 +51,7 @@ jobs:
             --noconfirm \
             --windowed \
             --onefile \
-            --name "FM26 Mod Manager" \
+            --name "FMMLoader26" \
             --icon src/assets/icon.icns \
             src/fmmloader26.py
         shell: bash
@@ -61,7 +61,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           mkdir -p upload
-          copy "dist\FM26 Mod Manager.exe" "upload\FM26 Mod Manager-Windows.exe"
+          copy "dist\FMMLoader26.exe" "upload\FMMLoader26.exe"
         shell: cmd
 
       - name: Package artifact (macOS)
@@ -70,7 +70,7 @@ jobs:
           mkdir -p upload
           # PyInstaller produces a .app bundle; zip it for upload
           cd dist
-          zip -r "../upload/FM26 Mod Manager-macOS.zip" "FM26 Mod Manager.app"
+          zip -r "../upload/FMMLoader26.zip" "FMMLoader27.app"
           cd ..
         shell: bash
 

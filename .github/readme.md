@@ -1,12 +1,12 @@
 <p align="center">
-  <img width="460" height="300" src=".github/fmmloaderheader.png">
+  <img width="460" height="300" src="imgs/fmmloaderheader.png">
 </p>
 
 **A cross-platform mod manager** for *Football Manager 2026*, built to make installing, organizing, and troubleshooting mods easy — on both **macOS** and **Windows**.  Developed by [Justin Levine](https://justinlevine.me) / notJalco and presented with the great help of **The FM Match Lab Team**.
 
 Join us on [Discord](https://discord.gg/QCW7QhWdAs) to discuss, ask questions, or contribute.
 
-A sample modification, BassyBoy's Speedster Modification, has been included in this repository in the `examples` folder. A special thanks to him for allowing me to include it with the files as reference for mod makers, as well as for users to instantly use this program.
+A couple of example modifications, provided by knap (tactics) and BassyBoy (UI improvements) have been included in the `example mods` directory.
 
 ---
 
@@ -102,8 +102,9 @@ When you enable mods and click **Apply Order**:
   - There are file conflicts between mods.
 
 - On Mac Systems, you may need to allow FMMLoader "App Management" permissions via System Preferences before it can make changes.
+
 <p align="center">
-  <img width="460"src=".github/appmgmt_osx.png">
+  <img width="460"src="imgs/appmgmt_osx.png">
 </p>
 ---
 
@@ -195,7 +196,7 @@ Each file entry in the `files` array should look like this:
 
 ### 🪶 Relative Paths and How They Work
 
-* All paths in your manifest are **relative to your mod’s root folder**.
+- All paths in your manifest are **relative to your mod’s root folder**.
   For example, if your folder looks like this:
 
   ```
@@ -216,20 +217,20 @@ Each file entry in the `files` array should look like this:
   ]
   ```
 
-* `target_subpath` defines the final file name inside the destination folder determined by `type`.
+- `target_subpath` defines the final file name inside the destination folder determined by `type`.
   For example:
 
-  * If `type = "tactics"` → the file installs into your FM *tactics folder*.
-  * If `type = "ui"` → the file installs into your FM *StreamingAssets* data folder.
+  - If `type = "tactics"` → the file installs into your FM *tactics folder*.
+  - If `type = "ui"` → the file installs into your FM *StreamingAssets* data folder.
 
 ---
 
 ### ✅ Good Practices
 
-* Always **include platform entries** if your mod uses different builds for Windows and macOS.
-* Keep names short and unique; folder name = mod name.
-* Test using **Enable → Apply Order → Disable → Apply Order** to ensure clean installation and removal.
-* Do **not** put huge archives (like graphics megapacks) directly in one file — split them by category for faster load and conflict detection.
+- Always **include platform entries** if your mod uses different builds for Windows and macOS.
+- Keep names short and unique; folder name = mod name.
+- Test using **Enable → Apply Order → Disable → Apply Order** to ensure clean installation and removal.
+- Do **not** put huge archives (like graphics megapacks) directly in one file — split them by category for faster load and conflict detection.
 
 ---
 
@@ -345,4 +346,5 @@ Under the following terms:
 See the full license here:  
 [https://creativecommons.org/licenses/by-nc/4.0/](https://creativecommons.org/licenses/by-nc/4.0/)
 ___
-### NOTE: This application involves modifying your FM game files. Some mods work, some mods don't. It is not a substitute or plug-and-play solution. It simply makes the distrubtion and installation of mods simpler. You should know how to verify your game files, and undo any changes if need be. 
+
+### NOTE: This application involves modifying your FM game files. Some mods work, some mods don't. It is not a substitute or plug-and-play solution. It simply makes the distrubtion and installation of mods simpler. You should know how to verify your game files, and undo any changes if need be

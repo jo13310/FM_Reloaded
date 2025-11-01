@@ -4,14 +4,14 @@ from PyInstaller.utils.hooks import collect_all
 
 datas, binaries, hiddenimports = collect_all('tkinter')
 
-app_name = "FM26 Mod Manager"
-icon_path = "src/assets/icon.ico" if sys.platform.startswith("win") else "src/assets/icon.icns"
+app_name = "FMMLoader26"
+icon_path = "assets/icon.ico" if sys.platform.startswith("win") else "assets/icon.icns"
 
 a = Analysis(
-    ['src/fm26_mod_manager_gui.py'],
+    ['fm26_mod_manager_gui.py'],
     pathex=['.'],
     binaries=binaries,
-    datas=datas + [('src/assets', 'assets')],
+    datas=datas + [('assets', 'assets')],
     hiddenimports=hiddenimports,
     noarchive=False,
 )
