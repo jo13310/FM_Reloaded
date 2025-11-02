@@ -1,0 +1,56 @@
+name: Sync VERSION constants
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Derive version from tag
+        run: |
+          TAG="${GITHUB_REF##*/}"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+
+      - name: Rewrite VERSION constants
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+
+          version = os.environ["VERSION"]
+          paths = [
+              "src/fm26_mod_manager_gui.py",
+              "src/fmmloader26.py",
+          ]
+
+          for path in paths:
+              file_path = pathlib.Path(path)
+              text = file_path.read_text()
+              new_text, count = re.subn(r'VERSION = "[^"]*"', f'VERSION = "{version}"', text, count=1)
+              if count:
+                  file_path.write_text(new_text)
+          PY
+
+      - name: Commit updated version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -am "chore: sync VERSION to ${VERSION}"
+            git push
+          fi
