@@ -3,6 +3,7 @@ Mod Store API Module for FM Reloaded Mod Manager
 Handles fetching, caching, and version comparison for the trusted mod store.
 """
 
+import copy
 import json
 import os
 import time
@@ -149,7 +150,8 @@ class ModStoreAPI:
         """
         try:
             store_data = self.fetch_store_index(force_refresh)
-            return store_data.get('mods', [])
+            mods = store_data.get('mods', [])
+            return [self._normalize_mod(m) for m in mods]
         except (ConnectionError, ValueError) as e:
             print(f"Error fetching mods: {e}")
             return []
@@ -203,8 +205,7 @@ class ModStoreAPI:
         Returns:
             Mod dictionary or None if not found
         """
-        all_mods = self.get_all_mods()
-        for mod in all_mods:
+        for mod in self.get_all_mods():
             if mod.get('name', '').lower() == name.lower():
                 return mod
         return None
@@ -247,6 +248,16 @@ class ModStoreAPI:
             if output_path.exists():
                 output_path.unlink()
             raise ConnectionError(f"Download failed: {e}")
+
+    def fetch_manifest(self, manifest_url: str) -> Dict:
+        """Fetch and parse a manifest.json file from a URL."""
+        try:
+            with urllib.request.urlopen(manifest_url, timeout=10) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.URLError as e:
+            raise ConnectionError(f"Failed to fetch manifest: {e}")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid manifest JSON at {manifest_url}: {e}")
 
     @staticmethod
     def compare_versions(version1: str, version2: str) -> int:
@@ -332,6 +343,41 @@ class ModStoreAPI:
             'valid': age_minutes < CACHE_DURATION_MINUTES,
             'cached_at': datetime.fromtimestamp(self._cache_timestamp).isoformat()
         }
+
+    def _normalize_mod(self, mod: Dict) -> Dict:
+        """Return a mod dict enriched with computed fields like download_url."""
+        normalized = copy.deepcopy(mod)
+        download_url = self._resolve_download_url(normalized)
+        if download_url:
+            normalized['download_url'] = download_url
+        return normalized
+
+    def _resolve_download_url(self, mod: Dict) -> Optional[str]:
+        """Resolve the direct download URL from the download descriptor."""
+        download = mod.get('download')
+        if not isinstance(download, dict):
+            return None
+
+        dtype = download.get('type')
+        if dtype == 'github_release':
+            repo = download.get('repo')
+            asset = download.get('asset')
+            if not repo or not asset:
+                return None
+
+            tag = download.get('tag')
+            if not tag:
+                version = mod.get('version', '')
+                prefix = download.get('tag_prefix', DEFAULT_TAG_PREFIX)
+                prefix = prefix if isinstance(prefix, str) else DEFAULT_TAG_PREFIX
+                if version:
+                    tag = f"{prefix}{version}" if prefix else version
+            if not tag:
+                return None
+
+            return f"https://github.com/{repo}/releases/download/{tag}/{asset}"
+
+        return None
 
 
 # Convenience functions for simple usage

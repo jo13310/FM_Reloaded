@@ -9,6 +9,7 @@
 # - Footer text credit line
 
 import os, sys, json, shutil, hashlib, webbrowser, subprocess, zipfile, tempfile
+from typing import Optional
 from pathlib import Path
 from datetime import datetime
 import tkinter as tk
@@ -1302,17 +1303,28 @@ class App(tk.Tk):
             return
 
         self._log(f"Downloading {mod_name}...")
-        threading.Thread(target=self._download_and_install, args=(mod_name, download_url), daemon=True).start()
+        threading.Thread(
+            target=self._download_and_install,
+            args=(mod_data,),
+            daemon=True,
+        ).start()
 
-    def _download_and_install(self, mod_name, url):
+    def _download_and_install(self, mod_data):
         """Download and install mod in background."""
         try:
+            mod_name = mod_data.get("name", "Unknown Mod")
+            url = mod_data.get("download_url")
+            manifest_url = mod_data.get("manifest_url")
+            if not url:
+                raise ValueError(f"No download URL available for '{mod_name}'.")
+
             temp_dir = Path(tempfile.mkdtemp(prefix="fm_store_"))
             downloaded = self.mod_store_api.download_mod(url, temp_dir)
 
             self.after(0, lambda: self._log(f"Downloaded {downloaded.name}, installing..."))
 
             # Import the downloaded mod
+            src_folder: Optional[Path] = None
             if downloaded.suffix.lower() == ".zip":
                 temp_extract = Path(tempfile.mkdtemp(prefix="fm_extract_"))
                 with zipfile.ZipFile(downloaded, "r") as z:
@@ -1322,7 +1334,39 @@ class App(tk.Tk):
                 candidates = [d for d in temp_extract.iterdir() if d.is_dir() and (d / "manifest.json").exists()]
                 src_folder = candidates[0] if candidates else temp_extract
             else:
-                src_folder = temp_dir
+                if not manifest_url:
+                    raise ValueError(
+                        f"Store entry for '{mod_name}' requires a manifest_url when the release asset is not a ZIP."
+                    )
+                manifest_data = self.mod_store_api.fetch_manifest(manifest_url)
+                package_dir = Path(tempfile.mkdtemp(prefix="fm_package_"))
+                manifest_path = package_dir / "manifest.json"
+                manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                manifest_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
+
+                files = manifest_data.get("files", [])
+                if not files:
+                    raise ValueError(f"Manifest for '{mod_name}' does not define any files.")
+
+                matched_entry = None
+                if len(files) == 1:
+                    matched_entry = files[0]
+                else:
+                    for entry in files:
+                        source_rel = entry.get("source")
+                        if source_rel and Path(source_rel).name.lower() == downloaded.name.lower():
+                            matched_entry = entry
+                            break
+
+                if not matched_entry or not matched_entry.get("source"):
+                    raise ValueError(
+                        f"Unable to map downloaded asset '{downloaded.name}' to manifest files for '{mod_name}'."
+                    )
+
+                dest_path = package_dir / matched_entry["source"]
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(downloaded, dest_path)
+                src_folder = package_dir
 
             newname = install_mod_from_folder(src_folder, None, log=self._log)
             order = get_load_order()
