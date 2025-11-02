@@ -12,6 +12,7 @@
 </div>
 
 <p align="center">
+  <a href="https://github.com/justinlevinedotme/FMMLoader-26/wiki">Wiki</a> •
   <a href="https://github.com/justinlevinedotme/FMMLoader-26/releases/latest">Download Latest Release</a> • <a href="#installation">Installation</a> •
   <a href="#features">Features</a> •
   <a href="#Usage Guide">Usage Guide</a> •
