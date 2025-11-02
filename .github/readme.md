@@ -122,6 +122,7 @@ C:\Program Files (x86)\Steam\steamapps\common\Football Manager 26\fm_Data\Stream
 - Browse or search for mods
 - Click on a mod to see details
 - Click **Install Selected** to download and install
+- Mods are staged in the FM Reloaded workspace; click **Enable** to deploy files to the Football Manager directory (for example `BepInEx/plugins` for DLLs or the Documents graphics folders).
 
 ---
 
@@ -129,6 +130,7 @@ C:\Program Files (x86)\Steam\steamapps\common\Football Manager 26\fm_Data\Stream
 
 - Select a mod and click **Enable (mark)** or **Disable (unmark)**.
 - Enabled mods show **`yes`** in the "Enabled" column.
+- Disabled mods remain in `%APPDATA%/FM_Reloaded_26/mods/` (or the macOS equivalent) so you can re-enable them later.
 
 ---
 

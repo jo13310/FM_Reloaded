@@ -281,8 +281,33 @@ def read_manifest(mod_dir: Path):
     return data
 
 
+def _game_root_from_target(base: Path) -> Path:
+    base_path = Path(base).resolve()
+    removable = {
+        "standalonewindows64",
+        "standaloneosx",
+        "standalonelinux64",
+        "aa",
+        "streamingassets",
+        "fm_data",
+        "data",
+    }
+    current = base_path
+    while current.name.lower() in removable and current.parent != current:
+        current = current.parent
+    return current
+
+
 def resolve_target(base: Path, sub: str) -> Path:
-    return Path(base) / sub
+    base = Path(base)
+    sub_path = Path(sub)
+    normalized = str(sub_path.as_posix())
+
+    if normalized.startswith("BepInEx/") or normalized.startswith("BepInEx\\"):
+        root = _game_root_from_target(base)
+        return root / Path(*normalized.split("/"))
+
+    return base / sub_path
 
 
 # ----------
@@ -884,7 +909,7 @@ class App(tk.Tk):
                     if wanted != "(all)" and mtype != wanted:
                         continue
                     ord_idx = order.index(p.name) if p.name in order else -1
-                    ord_disp = (ord_idx + 1) if ord_idx >= 0 else ""
+                    ord_disp = (ord_idx + 2) if ord_idx >= 0 else ""
                     ena = "yes" if p.name in enabled else ""
                     update_available = "⬆" if mf.get("name") in updates else ""
                     rows.append(
@@ -1908,3 +1933,5 @@ if __name__ == "__main__":
     # macOS may print "Secure coding is not enabled..." warning for Tk — harmless.
     app = App()
     app.mainloop()
+
+

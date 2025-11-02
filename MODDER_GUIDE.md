@@ -189,6 +189,16 @@ To copy a complete directory tree, point `source` at the folder and end both pat
 }
 ```
 
+### Install/Enable lifecycle
+
+Imported mods are stored in the FM Reloaded workspace (`%APPDATA%/FM_Reloaded_26/mods/` on Windows, `~/Library/Application Support/FM_Reloaded_26/mods/` on macOS). Enabling a mod reads the manifest and copies each entry in `files` to the proper destination:
+
+- Paths beginning with `BepInEx/` are written to the Football Manager installation folder (for example `C:\Program Files (x86)\Steam\steamapps\common\Football Manager 26\BepInEx\plugins`).
+- Graphics and tactics entries are routed to the Sports Interactive Documents directory.
+- UI/bundle overrides land under `fm_Data/StreamingAssets/aa/Standalone…`.
+
+Disabling a mod removes the installed files but keeps the copy in the workspace so you can re-enable it later.
+
 ---
 
 ## Mod Types
