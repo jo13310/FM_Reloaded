@@ -132,7 +132,8 @@ class DiscordWebhook:
         # For now, send without file attachments (Discord webhooks have limitations)
         # Files would require multipart/form-data which is complex without requests library
         thread_name = f"Error {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        success = self._send_payload(payload, thread_name=thread_name)
+        payload['thread_name'] = thread_name
+        success = self._send_payload(payload)
 
         if success and log_files:
             # Send log content as code blocks (fallback method)
@@ -371,4 +372,3 @@ def initialize_discord(error_webhook: str = "", mod_webhook: str = "") -> Discor
 def get_discord_channels() -> Optional[DiscordChannels]:
     """Get the global Discord channels instance."""
     return _discord_channels
-

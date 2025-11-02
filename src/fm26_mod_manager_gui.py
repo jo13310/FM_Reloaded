@@ -9,7 +9,7 @@
 # - Footer text credit line
 
 import os, sys, json, shutil, hashlib, webbrowser, subprocess, zipfile, tempfile
-from typing import Optional
+from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
 import tkinter as tk
@@ -176,6 +176,18 @@ def get_load_order():
 def set_load_order(order):
     cfg = load_config()
     cfg["load_order"] = order
+    save_config(cfg)
+
+
+def get_last_applied_mods() -> List[str]:
+    """Return the list of mods that were last applied to the game files."""
+    return load_config().get("last_applied_mods", [])
+
+
+def set_last_applied_mods(mods: List[str]):
+    """Persist the list of mods that were last applied to the game files."""
+    cfg = load_config()
+    cfg["last_applied_mods"] = list(mods)
     save_config(cfg)
 
 
@@ -901,12 +913,31 @@ def apply_enabled_mods_in_order(log):
     base = get_target()
     if not base or not base.exists():
         raise RuntimeError("No valid FM26 target set. Use Detect or Set Target.")
+
     enabled = get_enabled_mods()
+    enabled_set = set(enabled)
+    previously_applied = get_last_applied_mods()
+
+    removed = []
+    for name in previously_applied:
+        if name in enabled_set:
+            continue
+        try:
+            disable_mod(name, log)
+            removed.append(name)
+        except FileNotFoundError:
+            log(f"[disable/skip] {name} not found on disk; skipping removal.")
+        except Exception as ex:
+            log(f"[WARN] Failed disabling {name}: {ex}")
+
     order = get_load_order()
     ordered = [m for m in order if m in enabled] + [
         m for m in enabled if m not in order
     ]
     if not ordered:
+        if removed:
+            log(f"Removed {len(removed)} mod(s) no longer enabled.")
+        set_last_applied_mods([])
         log("No enabled mods to apply.")
         return
     rp = create_restore_point(base, log)
@@ -915,9 +946,12 @@ def apply_enabled_mods_in_order(log):
             enable_mod(name, log)
         except Exception as ex:
             log(f"[WARN] Failed enabling {name}: {ex}")
+    if removed:
+        log(f"Removed {len(removed)} mod(s) no longer enabled.")
     log(
         f"Applied {len(ordered)} mod(s) in order (last-write-wins). Restore point: {rp}"
     )
+    set_last_applied_mods(ordered)
 
 
 # ==========
@@ -938,6 +972,10 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         self.minsize(1100, 800)
         self._icon_image_ref: Optional[tk.PhotoImage] = None
         self._set_window_icon()
+
+        # Track selection metadata for detail actions
+        self._selected_mod_homepage: str = ""
+        self._selected_mod_readme: Optional[Path] = None
 
         # Initialize enhanced features
         if ENHANCED_FEATURES:
@@ -1124,7 +1162,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         mid = ttk.Frame(tab)
         mid.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
 
-        cols = ("name", "version", "type", "author", "order", "enabled", "update")
+        cols = ("name", "version", "type", "author", "order", "status", "update")
         self.tree = ttk.Treeview(mid, columns=cols, show="headings", height=12)
         for c in cols:
             self.tree.heading(c, text=c.capitalize())
@@ -1133,7 +1171,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         self.tree.column("type", width=100, anchor="w")
         self.tree.column("author", width=140, anchor="w")
         self.tree.column("order", width=50, anchor="center")
-        self.tree.column("enabled", width=70, anchor="center")
+        self.tree.column("status", width=90, anchor="center")
         self.tree.column("update", width=70, anchor="center")
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -1185,6 +1223,22 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         det.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
         self.details_text = tk.Text(det, height=6)
         self.details_text.pack(fill=tk.BOTH, expand=True)
+        links = ttk.Frame(det)
+        links.pack(fill=tk.X, pady=(4, 0))
+        self.open_homepage_btn = ttk.Button(
+            links,
+            text="Open Homepage",
+            command=self.on_open_mod_homepage,
+            state=tk.DISABLED,
+        )
+        self.open_homepage_btn.pack(side=tk.LEFT, padx=(0, 4))
+        self.open_readme_btn = ttk.Button(
+            links,
+            text="Open Readme",
+            command=self.on_open_mod_readme,
+            state=tk.DISABLED,
+        )
+        self.open_readme_btn.pack(side=tk.LEFT, padx=(0, 4))
         self.tree.bind("<<TreeviewSelect>>", self.on_select_row)
 
     def create_footer(self):
@@ -1356,9 +1410,9 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
                     if wanted != "(all)" and mtype != wanted:
                         continue
                     ord_idx = order.index(p.name) if p.name in order else -1
-                    ord_disp = (ord_idx + 2) if ord_idx >= 0 else ""
-                    ena = "yes" if p.name in enabled else ""
-                    update_available = "⬆" if mf.get("name") in updates else ""
+                    ord_disp = str(ord_idx + 1) if ord_idx >= 0 else "-"
+                    status_text = "Enabled" if p.name in enabled else "Disabled"
+                    update_available = "Update" if mf.get("name") in updates else ""
                     rows.append(
                         (
                             (
@@ -1367,36 +1421,36 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
                                 mtype,
                                 mf.get("author", ""),
                                 ord_disp,
-                                ena,
+                                status_text,
                                 update_available,
                             ),
                             mf,
                         )
                     )
                 except Exception:
-                    rows.append(((p.name, "?", "?", "?", "", "", ""), None))
+                    rows.append(((p.name, "?", "?", "?", "-", "Unknown", ""), None))
 
         # Insert rows with color tags
         for row, _ in rows:
             # Determine tags based on status
             tags = []
-            if row[5] == "yes":  # enabled column
+            if row[5] == "Enabled":
                 tags.append("enabled")
-            elif row[5] == "":
+            else:
                 tags.append("disabled")
-            if row[6] == "⬆":  # update column
+            if row[6]:
                 tags.append("update")
 
             self.tree.insert("", tk.END, values=row, tags=tags)
 
         self._log(f"Loaded {len(rows)} mod(s) (filter: {wanted}).")
         if updates:
-            self._log(f"ℹ {len(updates)} mod(s) have updates available in the store.")
+            self._log(f"[updates] {len(updates)} mod(s) have updates available in the store.")
         enabled = get_enabled_mods()
         conflicts, _ = find_conflicts(enabled if enabled else None)
         if conflicts:
             self._log(
-                f"⚠️ Detected {len(conflicts)} file conflict(s) among enabled mods — opening conflict manager."
+                f"[conflict] Detected {len(conflicts)} file conflict(s) among enabled mods; opening conflict manager."
             )
             self.after(500, self.on_conflicts)
 
@@ -1721,10 +1775,15 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         sel = self.tree.selection()
         if not sel:
             self.details_text.delete("1.0", tk.END)
+            self._selected_mod_homepage = ""
+            self._selected_mod_readme = None
+            self.open_homepage_btn.config(state=tk.DISABLED)
+            self.open_readme_btn.config(state=tk.DISABLED)
             return
         name = self.tree.item(sel[0])["values"][0]
         try:
-            mf = read_manifest(MODS_DIR / name)
+            mod_dir = MODS_DIR / name
+            mf = read_manifest(mod_dir)
             desc = mf.get("description", "")
             hp = mf.get("homepage", "")
             typ = mf.get("type", "misc")
@@ -1738,23 +1797,70 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             file_list = (
                 "\n".join(
                     [
-                        f"- {f.get('source','?')}  →  {f.get('target_subpath','?')}"
+                        f"- {f.get('source','?')}  ->  {f.get('target_subpath','?')}"
                         for f in files
                     ]
                 )
-                or "—"
+                or "-"
             )
+            readme_path = None
+            for candidate in mod_dir.iterdir():
+                if candidate.is_file() and candidate.name.lower().startswith("readme"):
+                    readme_path = candidate
+                    break
+            readme_preview = "Not found."
+            if readme_path:
+                try:
+                    preview = readme_path.read_text(encoding="utf-8", errors="ignore").strip()
+                    if len(preview) > 600:
+                        preview = preview[:600].rstrip() + "..."
+                    readme_preview = preview or "(Readme file is empty.)"
+                except Exception as readme_err:
+                    readme_preview = f"(Could not read {readme_path.name}: {readme_err})"
             text = (
                 f"Name: {mf.get('name',name)}\nVersion: {mf.get('version','')}\n"
-                f"Type: {typ} | Author: {auth} | License: {lic}\nHomepage: {hp}\n"
+                f"Type: {typ} | Author: {auth} | License: {lic}\nHomepage: {hp or 'N/A'}\n"
                 f"Compatibility: {comp_str}\nDependencies: {deps}\nConflicts: {conf}\n\n"
-                f"Description:\n{desc}\n\nFiles:\n{file_list}\n"
+                f"Description:\n{desc}\n\nFiles:\n{file_list}\n\n"
+                f"Readme Preview ({readme_path.name if readme_path else 'not available'}):\n{readme_preview}\n"
             )
             self.details_text.delete("1.0", tk.END)
             self.details_text.insert(tk.END, text)
+            self._selected_mod_homepage = hp.strip()
+            self._selected_mod_readme = readme_path
+            self.open_homepage_btn.config(
+                state=tk.NORMAL if self._selected_mod_homepage else tk.DISABLED
+            )
+            self.open_readme_btn.config(
+                state=tk.NORMAL if readme_path and readme_path.exists() else tk.DISABLED
+            )
         except Exception as e:
             self.details_text.delete("1.0", tk.END)
             self.details_text.insert(tk.END, f"(error reading manifest) {e}")
+            self._selected_mod_homepage = ""
+            self._selected_mod_readme = None
+            self.open_homepage_btn.config(state=tk.DISABLED)
+            self.open_readme_btn.config(state=tk.DISABLED)
+
+    def on_open_mod_homepage(self):
+        url = (self._selected_mod_homepage or "").strip()
+        if not url:
+            messagebox.showinfo("Homepage", "No homepage URL provided for this mod.")
+            return
+        try:
+            webbrowser.open(url)
+        except Exception as exc:
+            messagebox.showerror("Homepage", f"Failed to open homepage:\n{exc}")
+
+    def on_open_mod_readme(self):
+        readme_path = self._selected_mod_readme
+        if not readme_path or not readme_path.exists():
+            messagebox.showinfo("Readme", "No readme file found for this mod.")
+            return
+        try:
+            safe_open_path(readme_path)
+        except Exception as exc:
+            messagebox.showerror("Readme", f"Failed to open readme:\n{exc}")
 
     # ---- Enhanced feature handlers ----
     def refresh_store_mods(self):
@@ -2275,22 +2381,6 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         ttk.Entry(store_frame, textvariable=store_url_var, width=70).pack(fill=tk.X, pady=(0, 5))
         ttk.Label(store_frame, text="URL to mods.json file (usually on GitHub raw)", font=("", 8)).pack(anchor="w")
 
-        # Discord webhooks
-        discord_frame = ttk.Labelframe(container, text="Discord Integration", padding=10)
-        discord_frame.pack(fill=tk.X, pady=(0, 10))
-
-        webhooks = get_discord_webhooks()
-
-        ttk.Label(discord_frame, text="Error Report Webhook URL:").pack(anchor="w", pady=(0, 2))
-        error_webhook_var = tk.StringVar(value=webhooks['error'])
-        ttk.Entry(discord_frame, textvariable=error_webhook_var, width=70).pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Label(discord_frame, text="Mod Submission Webhook URL:").pack(anchor="w", pady=(0, 2))
-        mod_webhook_var = tk.StringVar(value=webhooks['mod_submission'])
-        ttk.Entry(discord_frame, textvariable=mod_webhook_var, width=70).pack(fill=tk.X, pady=(0, 5))
-
-        ttk.Label(discord_frame, text="Get webhook URLs from Discord server settings → Integrations → Webhooks", font=("", 8)).pack(anchor="w")
-
         # Options
         options_frame = ttk.Labelframe(container, text="Options", padding=10)
         options_frame.pack(fill=tk.X, pady=(0, 10))
@@ -2308,9 +2398,6 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             # Save store URL
             set_store_url(store_url_var.get().strip())
 
-            # Save Discord webhooks
-            set_discord_webhooks(error_webhook_var.get().strip(), mod_webhook_var.get().strip())
-
             # Save auto-check setting
             cfg = load_config()
             cfg["auto_check_updates"] = auto_check_var.get()
@@ -2319,10 +2406,6 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             # Update runtime instances
             if self.mod_store_api:
                 self.mod_store_api.set_store_url(store_url_var.get().strip())
-
-            if self.discord:
-                self.discord.set_error_webhook(error_webhook_var.get().strip())
-                self.discord.set_mod_webhook(mod_webhook_var.get().strip())
 
             messagebox.showinfo("Settings", "Settings saved successfully!\n\nRestart the app to apply theme changes.")
             win.destroy()

@@ -17,7 +17,7 @@ import shutil
 
 # Default store configuration
 DEFAULT_STORE_URL = "https://raw.githubusercontent.com/jo13310/FM_Reloaded_Trusted_Store/main/mods.json"
-CACHE_DURATION_MINUTES = 30
+CACHE_DURATION_MINUTES = 1
 DEFAULT_TAG_PREFIX = "v"
 
 
@@ -94,6 +94,24 @@ class ModStoreAPI:
         except IOError as e:
             print(f"Cache write error: {e}")
 
+    def _build_request(self, force_refresh: bool) -> urllib.request.Request:
+        """
+        Build a request object, optionally appending a cache-busting query parameter
+        and disabling client-side caching when a forced refresh is requested.
+        """
+        url = self.store_url
+        if force_refresh:
+            sep = "&" if "?" in url else "?"
+            url = f"{url}{sep}_ts={int(time.time())}"
+        return urllib.request.Request(
+            url,
+            headers={
+                "Cache-Control": "no-cache",
+                "Pragma": "no-cache",
+                "User-Agent": "FMReloaded-ModManager/1.0",
+            },
+        )
+
     def fetch_store_index(self, force_refresh: bool = False) -> Dict:
         """
         Fetch the mod store index from GitHub.
@@ -120,7 +138,8 @@ class ModStoreAPI:
 
         # Fetch fresh data from GitHub
         try:
-            with urllib.request.urlopen(self.store_url, timeout=10) as response:
+            request = self._build_request(force_refresh)
+            with urllib.request.urlopen(request, timeout=10) as response:
                 data = json.loads(response.read().decode('utf-8'))
 
             # Validate structure
@@ -380,6 +399,11 @@ class ModStoreAPI:
                 return None
 
             return f"https://github.com/{repo}/releases/download/{tag}/{asset}"
+
+        if dtype == 'direct':
+            url = download.get('url')
+            if isinstance(url, str) and url.strip():
+                return url.strip()
 
         return None
 
