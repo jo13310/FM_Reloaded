@@ -23,6 +23,55 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Determine release version
+        id: release_version
+        shell: python
+        run: |
+          import os
+          import pathlib
+          import re
+
+          ref = os.environ.get("GITHUB_REF", "")
+          version = ""
+
+          if ref.startswith("refs/tags/"):
+              tag = ref.rsplit("/", 1)[-1]
+              version = tag[1:] if tag.startswith("v") else tag
+          else:
+              source = pathlib.Path("src/fm26_mod_manager_gui.py")
+              if source.exists():
+                  match = re.search(r'VERSION = "([^"]+)"', source.read_text(encoding="utf-8"))
+                  if match:
+                      version = match.group(1)
+
+          if not version:
+              raise SystemExit("Could not determine release version")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"version={version}\n")
+
+      - name: Rewrite VERSION constants
+        if: steps.release_version.outputs.version != ''
+        env:
+          VERSION: ${{ steps.release_version.outputs.version }}
+        shell: python
+        run: |
+          import os
+          import pathlib
+          import re
+
+          version = os.environ["VERSION"]
+          for relative in ("src/fm26_mod_manager_gui.py", "src/fmmloader26.py"):
+              path = pathlib.Path(relative)
+              if not path.exists():
+                  continue
+
+              text = path.read_text(encoding="utf-8")
+              new_text, count = re.subn(r'VERSION = "([^"]+)"', f'VERSION = "{version}"', text, count=1)
+
+              if count:
+                  path.write_text(new_text, encoding="utf-8")
+
       - name: Install dependencies
         shell: bash
         run: |
