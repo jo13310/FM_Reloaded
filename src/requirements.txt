@@ -1,3 +1,4 @@
 pyinstaller
 tkinterdnd2
 rarfile
+ttkbootstrap>=1.10.1

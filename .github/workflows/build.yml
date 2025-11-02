@@ -84,43 +84,32 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: cmd
         run: |
-          pyinstaller ^
-            --clean ^
-            --noconfirm ^
-            --windowed ^
-            --onefile ^
-            --name "FM_Reloaded" ^
-            --icon src\assets\icon.ico ^
-            src\fm26_mod_manager_gui.py
+          cd src
+          pyinstaller --clean --noconfirm fm26_mod_manager.spec
 
       - name: Package artifact (Windows)
         if: matrix.os == 'windows-latest'
         shell: cmd
         run: |
           mkdir upload
-          copy "dist\FM_Reloaded.exe" "upload\FM_Reloaded.exe"
+          copy "src\dist\FM_Reloaded.exe" "upload\FM_Reloaded.exe"
 
       # ---------- macOS ----------
       - name: Build with PyInstaller (macOS)
         if: matrix.os == 'macos-latest'
         shell: bash
         run: |
-          pyinstaller \
-            --clean \
-            --noconfirm \
-            --windowed \
-            --name "FM_Reloaded" \
-            --icon src/assets/icon.icns \
-            src/fm26_mod_manager_gui.py
+          cd src
+          pyinstaller --clean --noconfirm fm26_mod_manager.spec
 
       - name: Package artifact (macOS)
         if: matrix.os == 'macos-latest'
         shell: bash
         run: |
           mkdir -p upload
-          cd dist
-          zip -r "../upload/FM_Reloaded-macOS.zip" "FM_Reloaded.app"
-          cd ..
+          cd src/dist
+          zip -r "../../upload/FM_Reloaded-macOS.zip" "FM_Reloaded.app"
+          cd ../..
 
       # ---------- Upload ----------
       - name: Upload artifact

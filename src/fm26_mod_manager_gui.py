@@ -13,8 +13,18 @@ from typing import Optional
 from pathlib import Path
 from datetime import datetime
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import messagebox, filedialog
 import threading
+
+# Import ttkbootstrap for modern UI
+try:
+    import ttkbootstrap as ttk
+    from ttkbootstrap.constants import *
+    TTKBOOTSTRAP_AVAILABLE = True
+except ImportError:
+    from tkinter import ttk
+    TTKBOOTSTRAP_AVAILABLE = False
+    print("Warning: ttkbootstrap not available, using standard ttk")
 
 # Import new modules
 try:
@@ -281,6 +291,39 @@ def read_manifest(mod_dir: Path):
     return data
 
 
+def fm_user_dir():
+    """Return FM user folder (for tactics, skins, graphics, etc.)."""
+    if sys.platform.startswith("win"):
+        return Path.home() / "Documents" / "Sports Interactive" / "Football Manager 26"
+    else:
+        # macOS
+        return (
+            Path.home()
+            / "Library/Application Support/Sports Interactive/Football Manager 26"
+        )
+
+
+def _copy_any(src: Path, dst: Path):
+    """
+    Merge-copy src -> dst.
+    - If src is a file: copy2(src, dst)
+    - If src is a directory: recursively copy its contents into dst (dirs_exist_ok)
+    """
+    if src.is_dir():
+        dst.mkdir(parents=True, exist_ok=True)
+        for child in src.rglob("*"):
+            rel = child.relative_to(src)
+            out = dst / rel
+            if child.is_dir():
+                out.mkdir(parents=True, exist_ok=True)
+            else:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(child, out)
+    else:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+
 def _game_root_from_target(base: Path) -> Path:
     base_path = Path(base).resolve()
     removable = {
@@ -299,15 +342,94 @@ def _game_root_from_target(base: Path) -> Path:
 
 
 def resolve_target(base: Path, sub: str) -> Path:
+    """
+    Resolve target path handling special prefixes.
+    - BepInEx/ → FM root/BepInEx/
+    - data/ → FM root/data/
+    - graphics/, tactics/, editor data/ → Documents folder
+    - Otherwise → relative to base
+    """
     base = Path(base)
     sub_path = Path(sub)
     normalized = str(sub_path.as_posix())
 
+    # BepInEx paths go to FM game root (from stored target)
     if normalized.startswith("BepInEx/") or normalized.startswith("BepInEx\\"):
-        root = _game_root_from_target(base)
+        # Get FM root by walking up from stored target (StandaloneWindows64)
+        stored_target = get_target()
+        if stored_target and stored_target.exists():
+            root = _game_root_from_target(stored_target)
+        else:
+            # Fallback: try to traverse from base
+            root = _game_root_from_target(base)
         return root / Path(*normalized.split("/"))
 
+    # data/ paths go to FM root
+    if normalized.startswith("data/") or normalized.startswith("data\\"):
+        # Get FM root by walking up from stored target (StandaloneWindows64)
+        stored_target = get_target()
+        if stored_target and stored_target.exists():
+            root = _game_root_from_target(stored_target)
+        else:
+            root = _game_root_from_target(base)
+        return root / Path(*normalized.split("/"))
+
+    # Documents-relative paths
+    user_dir = fm_user_dir()
+    if normalized.startswith("graphics/") or normalized.startswith("graphics\\"):
+        return user_dir / Path(*normalized.split("/"))
+    if normalized.startswith("tactics/") or normalized.startswith("tactics\\"):
+        return user_dir / Path(*normalized.split("/"))
+    if normalized.startswith("editor data/") or normalized.startswith("editor data\\"):
+        return user_dir / Path(*normalized.split("/"))
+
+    # Default: relative to base
     return base / sub_path
+
+
+def get_target_for_type(mod_type: str, mod_name: str = "") -> Path:
+    """
+    Return the appropriate install directory depending on mod type and mod name.
+    Auto-creates /graphics and its subfolders (kits, faces, logos) if missing.
+    """
+    base = fm_user_dir()
+    graphics_base = base / "graphics"
+    mod_type = (mod_type or "").lower()
+    mod_name = (mod_name or "").lower()
+
+    # UI/bundle mods go to the main FM install location (StandaloneWindows64)
+    if mod_type in ("ui", "bundle"):
+        return get_target()
+
+    # Tactics mods go to the user's tactics folder
+    if mod_type == "tactics":
+        path = base / "tactics"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    # Graphics and its subtypes
+    if mod_type == "graphics":
+        graphics_base.mkdir(parents=True, exist_ok=True)
+        if any(x in mod_name for x in ("kit", "kits")):
+            path = graphics_base / "kits"
+        elif any(x in mod_name for x in ("face", "faces", "portraits")):
+            path = graphics_base / "faces"
+        elif any(x in mod_name for x in ("logo", "logos", "badges")):
+            path = graphics_base / "logos"
+        else:
+            path = graphics_base
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    # Database/editor mods
+    if mod_type == "database":
+        path = base / "editor data"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    # Default fallback (misc mods)
+    base.mkdir(parents=True, exist_ok=True)
+    return base
 
 
 # ----------
@@ -343,14 +465,18 @@ def enable_mod(mod_name: str, log):
     if not mod_dir.exists():
         raise FileNotFoundError(f"Mod not found: {mod_name} in {MODS_DIR}")
     mf = read_manifest(mod_dir)
-    base = get_target()
+
+    # Get type-aware base directory (FIXED: was using get_target() which always returned StandaloneWindows64)
+    mod_type = mf.get("type", "misc")
+    base = get_target_for_type(mod_type, mf.get("name", mod_name))
+
     if not base or not base.exists():
         raise RuntimeError("No valid FM26 target set. Use Detect or Set Target.")
     files = mf.get("files", [])
     if not files:
         raise ValueError("Manifest has no 'files' entries.")
     plat = _platform_tag()
-    log(f"[enable] {mf.get('name', mod_name)}  →  {base}")
+    log(f"[enable] {mf.get('name', mod_name)} (type={mod_type})  →  {base}")
     log(f"  [context] platform={plat} files={len(files)}")
     wrote = skipped = backed_up = errors = 0
     for e in files:
@@ -377,7 +503,8 @@ def enable_mod(mod_name: str, log):
                 b = backup_original(tgt)
                 log(f"  [backup] {tgt_rel}  ←  {b.name if b else 'skipped'}")
                 backed_up += 1
-            shutil.copy2(src, tgt)
+            # Use _copy_any() instead of shutil.copy2() to support directories
+            _copy_any(src, tgt)
             log(f"  [write] {src_rel}  →  {tgt_rel}")
             wrote += 1
         except Exception as ex:
@@ -391,14 +518,18 @@ def enable_mod(mod_name: str, log):
 def disable_mod(mod_name: str, log):
     mod_dir = MODS_DIR / mod_name
     mf = read_manifest(mod_dir)
-    base = get_target()
+
+    # Get type-aware base directory (FIXED: was using get_target() which always returned StandaloneWindows64)
+    mod_type = mf.get("type", "misc")
+    base = get_target_for_type(mod_type, mf.get("name", mod_name))
+
     if not base or not base.exists():
         raise RuntimeError("No valid FM26 target set. Use Detect or Set Target.")
     files = mf.get("files", [])
     if not files:
         log("[disable] Manifest has no files to disable.")
         return
-    log(f"[disable] {mf.get('name', mod_name)}  from  {base}")
+    log(f"[disable] {mf.get('name', mod_name)} (type={mod_type})  from  {base}")
     removed = restored = missing_backup = not_present = errors = 0
     for e in files:
         tgt_rel = e.get("target_subpath")
@@ -534,10 +665,17 @@ def apply_enabled_mods_in_order(log):
 # ==========
 #   GUI
 # ==========
-class App(tk.Tk):
+class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
     def __init__(self):
-        super().__init__()
-        self.title(f"FM Reloaded Mod Manager v{VERSION}")
+        # Initialize with theme if ttkbootstrap is available
+        if TTKBOOTSTRAP_AVAILABLE:
+            # Use a modern theme (cosmo for light, darkly for dark)
+            theme = load_config().get("theme", "cosmo")
+            super().__init__(title=f"FM Reloaded Mod Manager v{VERSION}", themename=theme)
+        else:
+            super().__init__()
+            self.title(f"FM Reloaded Mod Manager v{VERSION}")
+
         self.geometry("1200x900")
         self.minsize(1100, 800)
         self._icon_image_ref: Optional[tk.PhotoImage] = None
@@ -586,7 +724,21 @@ class App(tk.Tk):
     # ---- logging ----
     def _log(self, msg: str):
         try:
-            self.log_text.insert(tk.END, msg + "\n")
+            # Detect message type and apply color
+            tag = None
+            if "[ERROR]" in msg.upper() or "FAILED" in msg.upper() or "ERROR:" in msg.upper():
+                tag = "ERROR"
+            elif "[WARN]" in msg.upper() or "WARNING" in msg.upper():
+                tag = "WARN"
+            elif "SUCCESS" in msg.upper() or "APPLIED" in msg.upper() or "ENABLED" in msg.upper():
+                tag = "SUCCESS"
+            elif "[INFO]" in msg.upper() or "READY" in msg.upper():
+                tag = "INFO"
+
+            if tag:
+                self.log_text.insert(tk.END, msg + "\n", tag)
+            else:
+                self.log_text.insert(tk.END, msg + "\n")
             self.log_text.see(tk.END)
         except Exception:
             pass
@@ -652,8 +804,12 @@ class App(tk.Tk):
         ttk.Label(top, text="Target:").pack(side=tk.LEFT)
         self.target_entry = ttk.Entry(top, textvariable=self.target_var, width=120)
         self.target_entry.pack(side=tk.LEFT, padx=(4, 6))
-        ttk.Button(top, text="Detect", command=self.on_detect).pack(side=tk.LEFT, padx=2)
-        ttk.Button(top, text="Set…", command=self.on_set_target).pack(side=tk.LEFT, padx=2)
+        if TTKBOOTSTRAP_AVAILABLE:
+            ttk.Button(top, text="Detect", command=self.on_detect, bootstyle="primary-outline").pack(side=tk.LEFT, padx=2)
+            ttk.Button(top, text="Set…", command=self.on_set_target, bootstyle="secondary-outline").pack(side=tk.LEFT, padx=2)
+        else:
+            ttk.Button(top, text="Detect", command=self.on_detect).pack(side=tk.LEFT, padx=2)
+            ttk.Button(top, text="Set…", command=self.on_set_target).pack(side=tk.LEFT, padx=2)
 
         # Create Notebook (tabs)
         self.notebook = ttk.Notebook(self)
@@ -673,8 +829,14 @@ class App(tk.Tk):
         # Log pane (shared, below tabs)
         log_frame = ttk.LabelFrame(self, text="Log")
         log_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=8, pady=(0, 8))
-        self.log_text = tk.Text(log_frame, height=8)
+        self.log_text = tk.Text(log_frame, height=8, wrap=tk.WORD)
         self.log_text.pack(fill=tk.BOTH, expand=True)
+
+        # Configure log text tags for color coding
+        self.log_text.tag_config("ERROR", foreground="#dc3545")
+        self.log_text.tag_config("WARN", foreground="#ffc107")
+        self.log_text.tag_config("SUCCESS", foreground="#28a745")
+        self.log_text.tag_config("INFO", foreground="#17a2b8")
 
         # Footer with credits and Discord buttons
         self.create_footer()
@@ -716,23 +878,49 @@ class App(tk.Tk):
         self.tree.column("enabled", width=70, anchor="center")
         self.tree.column("update", width=70, anchor="center")
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Configure treeview tags for color coding
+        if TTKBOOTSTRAP_AVAILABLE:
+            self.tree.tag_configure("enabled", background="#d4edda")  # Light green
+            self.tree.tag_configure("disabled", foreground="#6c757d")  # Gray
+            self.tree.tag_configure("update", background="#fff3cd")  # Light yellow
+        else:
+            self.tree.tag_configure("enabled", background="#e8f5e9")
+            self.tree.tag_configure("disabled", foreground="#999999")
+            self.tree.tag_configure("update", background="#fff9c4")
+
         sb = ttk.Scrollbar(mid, orient="vertical", command=self.tree.yview)
         sb.pack(side=tk.LEFT, fill=tk.Y)
         self.tree.configure(yscrollcommand=sb.set)
 
         right = ttk.Frame(mid)
         right.pack(side=tk.LEFT, fill=tk.Y, padx=8)
-        ttk.Button(right, text="Refresh", command=self.refresh_mod_list).pack(fill=tk.X, pady=2)
-        ttk.Button(right, text="Import Mod…", command=self.on_import_mod).pack(fill=tk.X, pady=2)
-        ttk.Button(right, text="Enable (mark)", command=self.on_enable_selected).pack(fill=tk.X, pady=(12, 2))
-        ttk.Button(right, text="Disable (unmark)", command=self.on_disable_selected).pack(fill=tk.X, pady=2)
-        ttk.Button(right, text="Up (Order)", command=self.on_move_up).pack(fill=tk.X, pady=(12, 2))
-        ttk.Button(right, text="Down (Order)", command=self.on_move_down).pack(fill=tk.X, pady=2)
-        ttk.Button(right, text="Apply Order", command=self.on_apply_order).pack(fill=tk.X, pady=(12, 2))
-        ttk.Button(right, text="Conflicts…", command=self.on_conflicts).pack(fill=tk.X, pady=2)
-        ttk.Button(right, text="Rollback…", command=self.on_rollback).pack(fill=tk.X, pady=(12, 2))
-        ttk.Button(right, text="Open Mods Folder", command=self.on_open_mods).pack(fill=tk.X, pady=2)
-        ttk.Button(right, text="Help (Manifest)", command=self.on_show_manifest_help).pack(fill=tk.X, pady=(12, 2))
+
+        # Add styled buttons with bootstyle if available
+        if TTKBOOTSTRAP_AVAILABLE:
+            ttk.Button(right, text="Refresh", command=self.refresh_mod_list, bootstyle="info-outline").pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Import Mod…", command=self.on_import_mod, bootstyle="primary").pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Enable (mark)", command=self.on_enable_selected, bootstyle="success-outline").pack(fill=tk.X, pady=(12, 2))
+            ttk.Button(right, text="Disable (unmark)", command=self.on_disable_selected, bootstyle="secondary-outline").pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Up (Order)", command=self.on_move_up, bootstyle="secondary-outline").pack(fill=tk.X, pady=(12, 2))
+            ttk.Button(right, text="Down (Order)", command=self.on_move_down, bootstyle="secondary-outline").pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Apply Order", command=self.on_apply_order, bootstyle="success").pack(fill=tk.X, pady=(12, 2))
+            ttk.Button(right, text="Conflicts…", command=self.on_conflicts, bootstyle="warning").pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Rollback…", command=self.on_rollback, bootstyle="danger-outline").pack(fill=tk.X, pady=(12, 2))
+            ttk.Button(right, text="Open Mods Folder", command=self.on_open_mods, bootstyle="info-outline").pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Help (Manifest)", command=self.on_show_manifest_help, bootstyle="secondary-outline").pack(fill=tk.X, pady=(12, 2))
+        else:
+            ttk.Button(right, text="Refresh", command=self.refresh_mod_list).pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Import Mod…", command=self.on_import_mod).pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Enable (mark)", command=self.on_enable_selected).pack(fill=tk.X, pady=(12, 2))
+            ttk.Button(right, text="Disable (unmark)", command=self.on_disable_selected).pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Up (Order)", command=self.on_move_up).pack(fill=tk.X, pady=(12, 2))
+            ttk.Button(right, text="Down (Order)", command=self.on_move_down).pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Apply Order", command=self.on_apply_order).pack(fill=tk.X, pady=(12, 2))
+            ttk.Button(right, text="Conflicts…", command=self.on_conflicts).pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Rollback…", command=self.on_rollback).pack(fill=tk.X, pady=(12, 2))
+            ttk.Button(right, text="Open Mods Folder", command=self.on_open_mods).pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Help (Manifest)", command=self.on_show_manifest_help).pack(fill=tk.X, pady=(12, 2))
 
         # Details pane
         det = ttk.LabelFrame(tab, text="Details")
@@ -928,8 +1116,20 @@ class App(tk.Tk):
                     )
                 except Exception:
                     rows.append(((p.name, "?", "?", "?", "", "", ""), None))
+
+        # Insert rows with color tags
         for row, _ in rows:
-            self.tree.insert("", tk.END, values=row)
+            # Determine tags based on status
+            tags = []
+            if row[5] == "yes":  # enabled column
+                tags.append("enabled")
+            elif row[5] == "":
+                tags.append("disabled")
+            if row[6] == "⬆":  # update column
+                tags.append("update")
+
+            self.tree.insert("", tk.END, values=row, tags=tags)
+
         self._log(f"Loaded {len(rows)} mod(s) (filter: {wanted}).")
         if updates:
             self._log(f"ℹ {len(updates)} mod(s) have updates available in the store.")
@@ -1781,35 +1981,68 @@ class App(tk.Tk):
         """Open settings/preferences dialog."""
         win = tk.Toplevel(self)
         win.title("Preferences")
-        win.geometry("600x400")
+        win.geometry("650x550")
+
+        # Create scrollable container
+        container = ttk.Frame(win)
+        container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Theme selection (if ttkbootstrap available)
+        if TTKBOOTSTRAP_AVAILABLE:
+            theme_frame = ttk.LabelFrame(container, text="Appearance", padding=10)
+            theme_frame.pack(fill=tk.X, pady=(0, 10))
+
+            ttk.Label(theme_frame, text="Theme:").pack(side=tk.LEFT, padx=(0, 10))
+            current_theme = load_config().get("theme", "cosmo")
+            theme_var = tk.StringVar(value=current_theme)
+
+            # Available themes: light and dark options
+            themes = ["cosmo", "flatly", "litera", "minty", "pulse", "sandstone", "united", "yeti",
+                     "darkly", "cyborg", "superhero", "solar", "vapor"]
+            theme_combo = ttk.Combobox(theme_frame, textvariable=theme_var, values=themes, state="readonly", width=20)
+            theme_combo.pack(side=tk.LEFT)
+
+            ttk.Label(theme_frame, text="(Restart required)", font=("", 8)).pack(side=tk.LEFT, padx=10)
 
         # Store URL
-        ttk.Label(win, text="Mod Store URL:", font=("", 10, "bold")).pack(padx=10, pady=(10, 5), anchor="w")
-        store_url_var = tk.StringVar(value=get_store_url())
-        ttk.Entry(win, textvariable=store_url_var, width=70).pack(padx=10, pady=5, fill=tk.X)
+        store_frame = ttk.LabelFrame(container, text="Mod Store", padding=10)
+        store_frame.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(win, text="URL to mods.json file (usually on GitHub raw)", font=("", 8)).pack(padx=10, pady=(0, 10), anchor="w")
+        ttk.Label(store_frame, text="Store URL:").pack(anchor="w", pady=(0, 5))
+        store_url_var = tk.StringVar(value=get_store_url())
+        ttk.Entry(store_frame, textvariable=store_url_var, width=70).pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(store_frame, text="URL to mods.json file (usually on GitHub raw)", font=("", 8)).pack(anchor="w")
 
         # Discord webhooks
-        ttk.Label(win, text="Discord Integration:", font=("", 10, "bold")).pack(padx=10, pady=(10, 5), anchor="w")
+        discord_frame = ttk.LabelFrame(container, text="Discord Integration", padding=10)
+        discord_frame.pack(fill=tk.X, pady=(0, 10))
 
         webhooks = get_discord_webhooks()
 
-        ttk.Label(win, text="Error Report Webhook URL:").pack(padx=10, pady=(5, 2), anchor="w")
+        ttk.Label(discord_frame, text="Error Report Webhook URL:").pack(anchor="w", pady=(0, 2))
         error_webhook_var = tk.StringVar(value=webhooks['error'])
-        ttk.Entry(win, textvariable=error_webhook_var, width=70).pack(padx=10, pady=2, fill=tk.X)
+        ttk.Entry(discord_frame, textvariable=error_webhook_var, width=70).pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(win, text="Mod Submission Webhook URL:").pack(padx=10, pady=(10, 2), anchor="w")
+        ttk.Label(discord_frame, text="Mod Submission Webhook URL:").pack(anchor="w", pady=(0, 2))
         mod_webhook_var = tk.StringVar(value=webhooks['mod_submission'])
-        ttk.Entry(win, textvariable=mod_webhook_var, width=70).pack(padx=10, pady=2, fill=tk.X)
+        ttk.Entry(discord_frame, textvariable=mod_webhook_var, width=70).pack(fill=tk.X, pady=(0, 5))
 
-        ttk.Label(win, text="Get webhook URLs from Discord server settings → Integrations → Webhooks", font=("", 8)).pack(padx=10, pady=(5, 10), anchor="w")
+        ttk.Label(discord_frame, text="Get webhook URLs from Discord server settings → Integrations → Webhooks", font=("", 8)).pack(anchor="w")
 
-        # Auto-check for updates
+        # Options
+        options_frame = ttk.LabelFrame(container, text="Options", padding=10)
+        options_frame.pack(fill=tk.X, pady=(0, 10))
+
         auto_check_var = tk.BooleanVar(value=load_config().get("auto_check_updates", True))
-        ttk.Checkbutton(win, text="Automatically check for app updates on startup", variable=auto_check_var).pack(padx=10, pady=10, anchor="w")
+        ttk.Checkbutton(options_frame, text="Automatically check for app updates on startup", variable=auto_check_var).pack(anchor="w")
 
         def save_settings():
+            # Save theme
+            if TTKBOOTSTRAP_AVAILABLE:
+                cfg = load_config()
+                cfg["theme"] = theme_var.get()
+                save_config(cfg)
+
             # Save store URL
             set_store_url(store_url_var.get().strip())
 
@@ -1829,14 +2062,18 @@ class App(tk.Tk):
                 self.discord.set_error_webhook(error_webhook_var.get().strip())
                 self.discord.set_mod_webhook(mod_webhook_var.get().strip())
 
-            messagebox.showinfo("Settings", "Settings saved successfully!")
+            messagebox.showinfo("Settings", "Settings saved successfully!\n\nRestart the app to apply theme changes.")
             win.destroy()
 
         # Buttons
-        btn_frame = ttk.Frame(win)
-        btn_frame.pack(side=tk.BOTTOM, pady=10)
-        ttk.Button(btn_frame, text="Save", command=save_settings).pack(side=tk.LEFT, padx=5)
-        ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.LEFT, padx=5)
+        btn_frame = ttk.Frame(container)
+        btn_frame.pack(side=tk.BOTTOM, pady=(10, 0))
+        if TTKBOOTSTRAP_AVAILABLE:
+            ttk.Button(btn_frame, text="Save", command=save_settings, bootstyle="success").pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="Cancel", command=win.destroy, bootstyle="secondary").pack(side=tk.LEFT, padx=5)
+        else:
+            ttk.Button(btn_frame, text="Save", command=save_settings).pack(side=tk.LEFT, padx=5)
+            ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.LEFT, padx=5)
 
     def _auto_check_updates(self):
         """Silently check for updates on startup."""
