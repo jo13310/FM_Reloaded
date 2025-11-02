@@ -18,6 +18,7 @@ import shutil
 # Default store configuration
 DEFAULT_STORE_URL = "https://raw.githubusercontent.com/jo13310/FM_Reloaded_Trusted_Store/main/mods.json"
 CACHE_DURATION_MINUTES = 30
+DEFAULT_TAG_PREFIX = "v"
 
 
 class ModStoreAPI:
