@@ -5,7 +5,6 @@
 <h1>FM Reloaded Mod Manager</h1>
 
 <a href="https://creativecommons.org/licenses/by-sa/4.0/"><img src="https://img.shields.io/badge/license-CC%20BY--SA%204.0-fdfdfd?style=flat&labelColor=black&logo=creativecommons&logoColor=white&logoSize=auto" alt="CC BY SA 4.0"></a>
-<a href=""><img alt= "Discord Link" src="https://img.shields.io/badge/Discord-7289da?style=flat-round&logo=discord&logoColor=white"></a>
 <img alt="GitHub contributors" src="https://img.shields.io/github/contributors/jo13310/FM_Reloaded">
 <img alt="GitHub Release" src="https://img.shields.io/github/v/release/jo13310/FM_Reloaded">
 
