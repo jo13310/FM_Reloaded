@@ -8,7 +8,7 @@ import sys
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Dict, List, Optional
 import zipfile
 import rarfile  # Note: Requires rarfile package and WinRAR/UnRAR
 import configparser
