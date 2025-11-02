@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# FM26 Mod Manager (FMMLoader26)
+# FM26 Mod Manager (FM_Reloaded_26)
 # Cross-platform (macOS/Windows) GUI with:
 # - Enable/disable mods, load order, filter by type
 # - Import from .zip or folder (+ drag & drop if tkinterdnd2 is available)
@@ -31,7 +31,7 @@ try:
 except Exception:
     DND_AVAILABLE = False
 
-APP_NAME = "FMMLoader26"
+APP_NAME = "FM_Reloaded_26"
 VERSION = "0.0.4"
 
 
@@ -679,7 +679,7 @@ BaseTk = TkinterDnD.Tk if DND_AVAILABLE else tk.Tk
 class App(BaseTk):
     def __init__(self):
         super().__init__()
-        self.title(f"FMMLoader26 v{VERSION} — Presented by the FM Match Lab Team")
+        self.title(f"FM_Reloaded_26 v{VERSION} — Presented by the FM Match Lab Team")
         self.geometry("1120x820")
         self.minsize(1000, 700)
         if DND_AVAILABLE:

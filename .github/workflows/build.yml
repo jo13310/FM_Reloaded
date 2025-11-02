@@ -1,9 +1,9 @@
-name: Build & Release FM26 Mod Manager
+name: Build & Release FM Reloaded Mod Manager
 
 on:
   push:
     tags:
-      - "v*"     # e.g., v0.4.2
+      - "v*"     # e.g., v0.5.0
   workflow_dispatch:
 
 jobs:
@@ -40,16 +40,16 @@ jobs:
             --noconfirm ^
             --windowed ^
             --onefile ^
-            --name "FMMLoader26" ^
+            --name "FM_Reloaded" ^
             --icon src\assets\icon.ico ^
-            src\fmmloader26.py
+            src\fm26_mod_manager_gui.py
 
       - name: Package artifact (Windows)
         if: matrix.os == 'windows-latest'
         shell: cmd
         run: |
           mkdir upload
-          copy "dist\FMMLoader26.exe" "upload\FMMLoader26.exe"
+          copy "dist\FM_Reloaded.exe" "upload\FM_Reloaded.exe"
 
       # ---------- macOS ----------
       - name: Build with PyInstaller (macOS)
@@ -60,10 +60,9 @@ jobs:
             --clean \
             --noconfirm \
             --windowed \
-            --onefile \
-            --name "FMMLoader26" \
+            --name "FM_Reloaded" \
             --icon src/assets/icon.icns \
-            src/fmmloader26.py
+            src/fm26_mod_manager_gui.py
 
       - name: Package artifact (macOS)
         if: matrix.os == 'macos-latest'
@@ -71,14 +70,14 @@ jobs:
         run: |
           mkdir -p upload
           cd dist
-          zip -r "../upload/FMMLoader26-macOS.zip" "FMMLoader26.app"
+          zip -r "../upload/FM_Reloaded-macOS.zip" "FM_Reloaded.app"
           cd ..
 
       # ---------- Upload ----------
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os == 'windows-latest' && 'FMMLoader26-Windows' || 'FMMLoader26-macOS' }}
+          name: ${{ matrix.os == 'windows-latest' && 'FM_Reloaded-Windows' || 'FM_Reloaded-macOS' }}
           path: upload/*
 
   release:
@@ -96,14 +95,14 @@ jobs:
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: FMMLoader26-Windows
+          name: FM_Reloaded-Windows
           path: artifacts/windows
         continue-on-error: true
 
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: FMMLoader26-macOS
+          name: FM_Reloaded-macOS
           path: artifacts/macos
         continue-on-error: true
 
@@ -116,8 +115,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/windows/FMMLoader26.exe
-            artifacts/macos/FMMLoader26-macOS.zip
+            artifacts/windows/FM_Reloaded.exe
+            artifacts/macos/FM_Reloaded-macOS.zip
           draft: false
           prerelease: false
         env:

@@ -2,7 +2,7 @@
 
 ## Our Pledge
 
-We are dedicated to creating a welcoming, safe, and respectful community for everyone who uses or contributes to **FM26 Mod Manager** — regardless of experience level, background, or identity.  
+We are dedicated to creating a welcoming, safe, and respectful community for everyone who uses or contributes to **FM Reloaded Mod Manager** — regardless of experience level, background, or identity.  
 We expect all contributors, maintainers, and community members to act in ways that promote mutual respect and inclusion.
 
 ---
@@ -36,7 +36,7 @@ They have the right to remove or edit contributions, comments, or other interact
 
 ## Scope
 
-This Code of Conduct applies to all project spaces, including GitHub issues, pull requests, discussions, and community channels related to **FM26 Mod Manager**.
+This Code of Conduct applies to all project spaces, including GitHub issues, pull requests, discussions, and community channels related to **FM Reloaded Mod Manager**.
 
 ---
 

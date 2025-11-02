@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# FM26 Mod Manager (FMMLoader26)
+# FM26 Mod Manager (FM_Reloaded_26)
 # Cross-platform (macOS/Windows) GUI with:
 # - Enable/disable mods, load order, filter by type
 # - Import from .zip or folder
@@ -13,9 +13,21 @@ from pathlib import Path
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+import threading
 
-APP_NAME = "FMMLoader26"
-VERSION = "0.4.0"
+# Import new modules
+try:
+    from mod_store_api import ModStoreAPI, check_mod_updates
+    from discord_webhook import DiscordChannels
+    from bepinex_manager import BepInExManager, find_fm_install_dir
+    from app_updater import AppUpdater
+    ENHANCED_FEATURES = True
+except ImportError as e:
+    print(f"Warning: Enhanced features unavailable: {e}")
+    ENHANCED_FEATURES = False
+
+APP_NAME = "FM_Reloaded_26"
+VERSION = "0.5.0"  # Updated version with enhanced features
 
 
 # -----------------------
@@ -152,6 +164,31 @@ def get_load_order():
 def set_load_order(order):
     cfg = load_config()
     cfg["load_order"] = order
+    save_config(cfg)
+
+
+def get_store_url():
+    return load_config().get("store_url", "https://raw.githubusercontent.com/jo13310/FM_Reloaded_Trusted_Store/main/mods.json")
+
+
+def set_store_url(url):
+    cfg = load_config()
+    cfg["store_url"] = url
+    save_config(cfg)
+
+
+def get_discord_webhooks():
+    cfg = load_config()
+    return {
+        'error': cfg.get("discord_error_webhook", "https://discord.com/api/webhooks/1434612338970857474/D0pdw_G1lltO3ylLJv5DFu6aMXAgTrdqzH8iH-KUsyDmiKLQ5YYBqFRvdhI0S62tBNPp"),
+        'mod_submission': cfg.get("discord_mod_webhook", "https://discord.com/api/webhooks/1434612412467904652/iF2wgQfFJoQRzXYzQZ-UtKfVDEAWSF-V-OLqp0MWl1BOGvda2ue4-SFaPVXxt77Eirxe")
+    }
+
+
+def set_discord_webhooks(error_url, mod_url):
+    cfg = load_config()
+    cfg["discord_error_webhook"] = error_url
+    cfg["discord_mod_webhook"] = mod_url
     save_config(cfg)
 
 
@@ -456,13 +493,30 @@ def apply_enabled_mods_in_order(log):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"FMMLoader26 v{VERSION} — Presented by the FM Match Lab Team")
-        self.geometry("1120x820")
-        self.minsize(1000, 700)
+        self.title(f"FM Reloaded Mod Manager v{VERSION}")
+        self.geometry("1200x900")
+        self.minsize(1100, 800)
+
+        # Initialize enhanced features
+        if ENHANCED_FEATURES:
+            self.mod_store_api = ModStoreAPI(get_store_url())
+            webhooks = get_discord_webhooks()
+            self.discord = DiscordChannels(webhooks['error'], webhooks['mod_submission'])
+            fm_dir = find_fm_install_dir()
+            self.bepinex_manager = BepInExManager(fm_dir) if fm_dir else None
+        else:
+            self.mod_store_api = None
+            self.discord = None
+            self.bepinex_manager = None
+
         self.create_widgets()
         self.refresh_target_display()
         self.refresh_mod_list()
         self._log("Ready.")
+
+        # Auto-check for updates if enabled
+        if ENHANCED_FEATURES and load_config().get("auto_check_updates", True):
+            self.after(2000, self._auto_check_updates)  # Check after 2 seconds
 
     # ---- logging ----
     def _log(self, msg: str):
@@ -487,9 +541,7 @@ class App(tk.Tk):
         file_menu.add_separator()
         file_menu.add_command(label="Open Target", command=self.on_open_target)
         file_menu.add_command(label="Open Mods Folder", command=self.on_open_mods)
-        file_menu.add_command(
-            label="Open Logs Folder", command=self.on_open_logs_folder
-        )
+        file_menu.add_command(label="Open Logs Folder", command=self.on_open_logs_folder)
         file_menu.add_separator()
         file_menu.add_command(label="Quit", command=self.destroy)
         menubar.add_cascade(label="File", menu=file_menu)
@@ -498,7 +550,26 @@ class App(tk.Tk):
         actions_menu.add_command(label="Apply Order\tF5", command=self.on_apply_order)
         actions_menu.add_command(label="Conflicts…", command=self.on_conflicts)
         actions_menu.add_command(label="Rollback…", command=self.on_rollback)
+        if ENHANCED_FEATURES:
+            actions_menu.add_separator()
+            actions_menu.add_command(label="Generate Mod Template…", command=self.on_generate_template)
         menubar.add_cascade(label="Actions", menu=actions_menu)
+
+        # Settings menu (if enhanced features available)
+        if ENHANCED_FEATURES:
+            settings_menu = tk.Menu(menubar, tearoff=0)
+            settings_menu.add_command(label="Preferences…", command=self.on_settings)
+            menubar.add_cascade(label="Settings", menu=settings_menu)
+
+        # Help menu
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="Manifest Help", command=self.on_show_manifest_help)
+        if ENHANCED_FEATURES:
+            help_menu.add_command(label="Check for Updates…", command=self.on_check_updates)
+        help_menu.add_separator()
+        help_menu.add_command(label="About FM Reloaded", command=self.on_about)
+        menubar.add_cascade(label="Help", menu=help_menu)
+
         self.config(menu=menubar)
 
         # Shortcuts
@@ -509,26 +580,48 @@ class App(tk.Tk):
             self.bind_all("<Command-d>", lambda e: self.on_detect())
             self.bind_all("<Command-o>", lambda e: self.on_set_target())
 
-        # Target row
+        # Target row (shared across all tabs)
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
         self.target_var = tk.StringVar()
         ttk.Label(top, text="Target:").pack(side=tk.LEFT)
         self.target_entry = ttk.Entry(top, textvariable=self.target_var, width=120)
         self.target_entry.pack(side=tk.LEFT, padx=(4, 6))
+        ttk.Button(top, text="Detect", command=self.on_detect).pack(side=tk.LEFT, padx=2)
+        ttk.Button(top, text="Set…", command=self.on_set_target).pack(side=tk.LEFT, padx=2)
+
+        # Create Notebook (tabs)
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        # Tab 1: My Mods
+        self.create_my_mods_tab()
+
+        # Tab 2: Mod Store (if enhanced features available)
+        if ENHANCED_FEATURES and self.mod_store_api:
+            self.create_mod_store_tab()
+
+        # Tab 3: BepInEx (if enhanced features available)
+        if ENHANCED_FEATURES and self.bepinex_manager:
+            self.create_bepinex_tab()
+
+        # Log pane (shared, below tabs)
+        log_frame = ttk.LabelFrame(self, text="Log")
+        log_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=8, pady=(0, 8))
+        self.log_text = tk.Text(log_frame, height=8)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
+
+        # Footer with credits and Discord buttons
+        self.create_footer()
+
+    def create_my_mods_tab(self):
+        """Create the My Mods tab (original mod manager functionality)."""
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text="My Mods")
 
         # Controls row
-        flt = ttk.Frame(self)
-        flt.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 6))
-        ttk.Button(flt, text="Detect", command=self.on_detect).pack(
-            side=tk.LEFT, padx=2
-        )
-        ttk.Button(flt, text="Set Target…", command=self.on_set_target).pack(
-            side=tk.LEFT, padx=2
-        )
-        ttk.Button(flt, text="Open Target", command=self.on_open_target).pack(
-            side=tk.LEFT, padx=2
-        )
+        flt = ttk.Frame(tab)
+        flt.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
         self.type_filter = tk.StringVar(value="(all)")
         self.type_combo = ttk.Combobox(
@@ -536,34 +629,27 @@ class App(tk.Tk):
             textvariable=self.type_filter,
             width=18,
             state="readonly",
-            values=[
-                "(all)",
-                "ui",
-                "skins",
-                "database",
-                "ruleset",
-                "graphics",
-                "audio",
-                "misc",
-            ],
+            values=["(all)", "ui", "skins", "database", "ruleset", "graphics", "audio", "tactics", "misc"],
         )
         self.type_combo.pack(side=tk.RIGHT, padx=6)
         ttk.Label(flt, text="Filter mod type:").pack(side=tk.RIGHT)
         self.type_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_mod_list())
 
         # Main list + right panel
-        mid = ttk.Frame(self)
+        mid = ttk.Frame(tab)
         mid.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
-        cols = ("name", "version", "type", "author", "order", "enabled")
+
+        cols = ("name", "version", "type", "author", "order", "enabled", "update")
         self.tree = ttk.Treeview(mid, columns=cols, show="headings", height=12)
         for c in cols:
             self.tree.heading(c, text=c.capitalize())
-        self.tree.column("name", width=300, anchor="w")
-        self.tree.column("version", width=90, anchor="w")
-        self.tree.column("type", width=110, anchor="w")
-        self.tree.column("author", width=160, anchor="w")
-        self.tree.column("order", width=60, anchor="center")
-        self.tree.column("enabled", width=80, anchor="center")
+        self.tree.column("name", width=280, anchor="w")
+        self.tree.column("version", width=80, anchor="w")
+        self.tree.column("type", width=100, anchor="w")
+        self.tree.column("author", width=140, anchor="w")
+        self.tree.column("order", width=50, anchor="center")
+        self.tree.column("enabled", width=70, anchor="center")
+        self.tree.column("update", width=70, anchor="center")
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb = ttk.Scrollbar(mid, orient="vertical", command=self.tree.yview)
         sb.pack(side=tk.LEFT, fill=tk.Y)
@@ -571,65 +657,145 @@ class App(tk.Tk):
 
         right = ttk.Frame(mid)
         right.pack(side=tk.LEFT, fill=tk.Y, padx=8)
-        ttk.Button(right, text="Refresh", command=self.refresh_mod_list).pack(
-            fill=tk.X, pady=2
-        )
-        ttk.Button(right, text="Import Mod…", command=self.on_import_mod).pack(
-            fill=tk.X, pady=2
-        )
-        ttk.Button(right, text="Enable (mark)", command=self.on_enable_selected).pack(
-            fill=tk.X, pady=(12, 2)
-        )
-        ttk.Button(
-            right, text="Disable (unmark)", command=self.on_disable_selected
-        ).pack(fill=tk.X, pady=2)
-        ttk.Button(right, text="Up (Order)", command=self.on_move_up).pack(
-            fill=tk.X, pady=(12, 2)
-        )
-        ttk.Button(right, text="Down (Order)", command=self.on_move_down).pack(
-            fill=tk.X, pady=2
-        )
-        ttk.Button(right, text="Apply Order", command=self.on_apply_order).pack(
-            fill=tk.X, pady=(12, 2)
-        )
-        ttk.Button(right, text="Conflicts…", command=self.on_conflicts).pack(
-            fill=tk.X, pady=2
-        )
-        ttk.Button(right, text="Rollback…", command=self.on_rollback).pack(
-            fill=tk.X, pady=(12, 2)
-        )
-        ttk.Button(right, text="Open Mods Folder", command=self.on_open_mods).pack(
-            fill=tk.X, pady=2
-        )
-        ttk.Button(
-            right, text="Open Logs Folder", command=self.on_open_logs_folder
-        ).pack(fill=tk.X, pady=2)
-        ttk.Button(right, text="Copy Log Path", command=self.on_copy_log_path).pack(
-            fill=tk.X, pady=(12, 2)
-        )
-        ttk.Button(
-            right, text="Help (Manifest)", command=self.on_show_manifest_help
-        ).pack(fill=tk.X, pady=(12, 2))
+        ttk.Button(right, text="Refresh", command=self.refresh_mod_list).pack(fill=tk.X, pady=2)
+        ttk.Button(right, text="Import Mod…", command=self.on_import_mod).pack(fill=tk.X, pady=2)
+        ttk.Button(right, text="Enable (mark)", command=self.on_enable_selected).pack(fill=tk.X, pady=(12, 2))
+        ttk.Button(right, text="Disable (unmark)", command=self.on_disable_selected).pack(fill=tk.X, pady=2)
+        ttk.Button(right, text="Up (Order)", command=self.on_move_up).pack(fill=tk.X, pady=(12, 2))
+        ttk.Button(right, text="Down (Order)", command=self.on_move_down).pack(fill=tk.X, pady=2)
+        ttk.Button(right, text="Apply Order", command=self.on_apply_order).pack(fill=tk.X, pady=(12, 2))
+        ttk.Button(right, text="Conflicts…", command=self.on_conflicts).pack(fill=tk.X, pady=2)
+        ttk.Button(right, text="Rollback…", command=self.on_rollback).pack(fill=tk.X, pady=(12, 2))
+        ttk.Button(right, text="Open Mods Folder", command=self.on_open_mods).pack(fill=tk.X, pady=2)
+        ttk.Button(right, text="Help (Manifest)", command=self.on_show_manifest_help).pack(fill=tk.X, pady=(12, 2))
 
         # Details pane
-        det = ttk.LabelFrame(self, text="Details")
+        det = ttk.LabelFrame(tab, text="Details")
         det.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
         self.details_text = tk.Text(det, height=6)
         self.details_text.pack(fill=tk.BOTH, expand=True)
         self.tree.bind("<<TreeviewSelect>>", self.on_select_row)
 
-        # Log pane
-        log_frame = ttk.LabelFrame(self, text="Log")
-        log_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=False, padx=8, pady=(0, 8))
-        self.log_text = tk.Text(log_frame, height=10)
-        self.log_text.pack(fill=tk.BOTH, expand=True)
-
-        # Footer
+    def create_footer(self):
+        """Create footer with credits and Discord buttons."""
         footer = ttk.Frame(self)
         footer.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=8)
-        ttk.Label(
-            footer, text="Presented by the FM Match Lab Team", anchor="center"
-        ).pack()
+
+        # Left side: Credits
+        credits_left = ttk.Label(
+            footer,
+            text="Created by Justin Levine & FM Match Lab Team",
+            anchor="w"
+        )
+        credits_left.pack(side=tk.LEFT)
+
+        # Center: Forked by
+        credits_center = ttk.Label(
+            footer,
+            text=" | Forked & Enhanced by GerKo",
+            anchor="center"
+        )
+        credits_center.pack(side=tk.LEFT)
+
+        # Right side: Discord buttons (if enhanced features available)
+        if ENHANCED_FEATURES and self.discord:
+            btn_frame = ttk.Frame(footer)
+            btn_frame.pack(side=tk.RIGHT)
+            ttk.Button(btn_frame, text="Report Bug", command=self.on_report_bug).pack(side=tk.LEFT, padx=2)
+            ttk.Button(btn_frame, text="Submit Mod", command=self.on_submit_mod).pack(side=tk.LEFT, padx=2)
+
+    def create_mod_store_tab(self):
+        """Create the Mod Store browser tab."""
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text="Mod Store")
+
+        # Top controls
+        controls = ttk.Frame(tab)
+        controls.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+
+        ttk.Label(controls, text="Search:").pack(side=tk.LEFT, padx=(0, 4))
+        self.store_search_var = tk.StringVar()
+        search_entry = ttk.Entry(controls, textvariable=self.store_search_var, width=30)
+        search_entry.pack(side=tk.LEFT, padx=(0, 8))
+
+        ttk.Button(controls, text="Search", command=self.on_store_search).pack(side=tk.LEFT, padx=2)
+        ttk.Button(controls, text="Refresh Store", command=self.on_store_refresh).pack(side=tk.LEFT, padx=2)
+
+        # Store mod list + details
+        mid = ttk.Frame(tab)
+        mid.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=(0, 8))
+
+        cols = ("name", "version", "type", "author", "downloads")
+        self.store_tree = ttk.Treeview(mid, columns=cols, show="headings", height=15)
+        for c in cols:
+            self.store_tree.heading(c, text=c.capitalize())
+        self.store_tree.column("name", width=300, anchor="w")
+        self.store_tree.column("version", width=80, anchor="w")
+        self.store_tree.column("type", width=100, anchor="w")
+        self.store_tree.column("author", width=150, anchor="w")
+        self.store_tree.column("downloads", width=80, anchor="center")
+        self.store_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = ttk.Scrollbar(mid, orient="vertical", command=self.store_tree.yview)
+        sb.pack(side=tk.LEFT, fill=tk.Y)
+        self.store_tree.configure(yscrollcommand=sb.set)
+
+        right = ttk.Frame(mid)
+        right.pack(side=tk.LEFT, fill=tk.Y, padx=8)
+        ttk.Button(right, text="Install Selected", command=self.on_store_install).pack(fill=tk.X, pady=2)
+        ttk.Button(right, text="View Details", command=self.on_store_details).pack(fill=tk.X, pady=2)
+
+        # Details pane
+        det = ttk.LabelFrame(tab, text="Mod Details")
+        det.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 8))
+        self.store_details_text = tk.Text(det, height=6)
+        self.store_details_text.pack(fill=tk.BOTH, expand=True)
+        self.store_tree.bind("<<TreeviewSelect>>", self.on_store_select_row)
+
+        # Load store mods
+        self.refresh_store_mods()
+
+    def create_bepinex_tab(self):
+        """Create the BepInEx management tab."""
+        tab = ttk.Frame(self.notebook)
+        self.notebook.add(tab, text="BepInEx")
+
+        # Status section
+        status_frame = ttk.LabelFrame(tab, text="Installation Status")
+        status_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+
+        self.bepinex_status_var = tk.StringVar(value="Checking...")
+        ttk.Label(status_frame, textvariable=self.bepinex_status_var, font=("", 10, "bold")).pack(padx=10, pady=10)
+
+        # Installation section
+        install_frame = ttk.LabelFrame(tab, text="Installation")
+        install_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+
+        ttk.Button(install_frame, text="Install BepInEx", command=self.on_bepinex_install).pack(padx=10, pady=5, fill=tk.X)
+        ttk.Label(install_frame, text="Installs BepInEx from BepInEx_Patched_Win_af0cba7.rar", font=("", 8)).pack(padx=10, pady=(0, 10))
+
+        # Configuration section
+        config_frame = ttk.LabelFrame(tab, text="Configuration")
+        config_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
+
+        self.bepinex_console_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            config_frame,
+            text="Enable Console Logging (shows console window)",
+            variable=self.bepinex_console_var,
+            command=self.on_bepinex_toggle_console
+        ).pack(padx=10, pady=5, anchor="w")
+
+        ttk.Button(config_frame, text="Open BepInEx Config File", command=self.on_bepinex_open_config).pack(padx=10, pady=5, fill=tk.X)
+
+        # Logs section
+        logs_frame = ttk.LabelFrame(tab, text="Logs & Debugging")
+        logs_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        ttk.Button(logs_frame, text="View Latest Log", command=self.on_bepinex_view_log).pack(padx=10, pady=5, fill=tk.X)
+        ttk.Button(logs_frame, text="Open BepInEx Folder", command=self.on_bepinex_open_folder).pack(padx=10, pady=5, fill=tk.X)
+
+        # Update status
+        self.refresh_bepinex_status()
 
     # ---- menu/button actions ----
     def on_copy_log_path(self):
@@ -651,6 +817,23 @@ class App(tk.Tk):
         wanted = self.type_filter.get()
         order = get_load_order()
         enabled = set(get_enabled_mods())
+
+        # Check for updates if enhanced features available
+        updates = {}
+        if ENHANCED_FEATURES and self.mod_store_api:
+            try:
+                installed_mods = {}
+                for p in MODS_DIR.iterdir():
+                    if p.is_dir():
+                        try:
+                            mf = read_manifest(p)
+                            installed_mods[mf.get("name", p.name)] = mf.get("version", "0.0.0")
+                        except:
+                            pass
+                updates = self.mod_store_api.check_for_updates(installed_mods)
+            except Exception as e:
+                self._log(f"Update check failed: {e}")
+
         rows = []
         # list dirs
         for p in MODS_DIR.iterdir():
@@ -663,6 +846,7 @@ class App(tk.Tk):
                     ord_idx = order.index(p.name) if p.name in order else -1
                     ord_disp = (ord_idx + 1) if ord_idx >= 0 else ""
                     ena = "yes" if p.name in enabled else ""
+                    update_available = "⬆" if mf.get("name") in updates else ""
                     rows.append(
                         (
                             (
@@ -672,15 +856,18 @@ class App(tk.Tk):
                                 mf.get("author", ""),
                                 ord_disp,
                                 ena,
+                                update_available,
                             ),
                             mf,
                         )
                     )
                 except Exception:
-                    rows.append(((p.name, "?", "?", "?", "", ""), None))
+                    rows.append(((p.name, "?", "?", "?", "", "", ""), None))
         for row, _ in rows:
             self.tree.insert("", tk.END, values=row)
         self._log(f"Loaded {len(rows)} mod(s) (filter: {wanted}).")
+        if updates:
+            self._log(f"ℹ {len(updates)} mod(s) have updates available in the store.")
         enabled = get_enabled_mods()
         conflicts, _ = find_conflicts(enabled if enabled else None)
         if conflicts:
@@ -1031,6 +1218,579 @@ class App(tk.Tk):
         except Exception as e:
             self.details_text.delete("1.0", tk.END)
             self.details_text.insert(tk.END, f"(error reading manifest) {e}")
+
+    # ---- Enhanced feature handlers ----
+    def refresh_store_mods(self):
+        """Load and display mods from the store."""
+        if not ENHANCED_FEATURES or not self.mod_store_api:
+            return
+
+        try:
+            for i in self.store_tree.get_children():
+                self.store_tree.delete(i)
+
+            mods = self.mod_store_api.get_all_mods()
+            for mod in mods:
+                self.store_tree.insert("", tk.END, values=(
+                    mod.get("name", "?"),
+                    mod.get("version", "?"),
+                    mod.get("type", "?"),
+                    mod.get("author", "?"),
+                    mod.get("downloads", "—")
+                ))
+            self._log(f"Loaded {len(mods)} mods from store.")
+        except Exception as e:
+            self._log(f"Error loading store: {e}")
+            messagebox.showerror("Store Error", f"Failed to load mod store:\n{e}")
+
+    def on_store_search(self):
+        """Search mods in the store."""
+        if not ENHANCED_FEATURES or not self.mod_store_api:
+            return
+
+        query = self.store_search_var.get()
+        try:
+            for i in self.store_tree.get_children():
+                self.store_tree.delete(i)
+
+            mods = self.mod_store_api.search_mods(query=query)
+            for mod in mods:
+                self.store_tree.insert("", tk.END, values=(
+                    mod.get("name", "?"),
+                    mod.get("version", "?"),
+                    mod.get("type", "?"),
+                    mod.get("author", "?"),
+                    mod.get("downloads", "—")
+                ))
+            self._log(f"Found {len(mods)} mods matching '{query}'.")
+        except Exception as e:
+            messagebox.showerror("Search Error", str(e))
+
+    def on_store_refresh(self):
+        """Force refresh store cache."""
+        if not ENHANCED_FEATURES or not self.mod_store_api:
+            return
+
+        self._log("Refreshing store index...")
+        threading.Thread(target=self._refresh_store_async, daemon=True).start()
+
+    def _refresh_store_async(self):
+        """Async store refresh."""
+        try:
+            self.mod_store_api.fetch_store_index(force_refresh=True)
+            self.after(0, self.refresh_store_mods)
+        except Exception as e:
+            self.after(0, lambda: messagebox.showerror("Refresh Error", str(e)))
+
+    def on_store_install(self):
+        """Install selected mod from store."""
+        sel = self.store_tree.selection()
+        if not sel:
+            messagebox.showinfo("Install", "Select a mod first.")
+            return
+
+        mod_name = self.store_tree.item(sel[0])["values"][0]
+        mod_data = self.mod_store_api.get_mod_by_name(mod_name)
+
+        if not mod_data:
+            messagebox.showerror("Install Error", f"Mod '{mod_name}' not found in store.")
+            return
+
+        download_url = mod_data.get("download_url")
+        if not download_url:
+            messagebox.showerror("Install Error", "No download URL available for this mod.")
+            return
+
+        self._log(f"Downloading {mod_name}...")
+        threading.Thread(target=self._download_and_install, args=(mod_name, download_url), daemon=True).start()
+
+    def _download_and_install(self, mod_name, url):
+        """Download and install mod in background."""
+        try:
+            temp_dir = Path(tempfile.mkdtemp(prefix="fm_store_"))
+            downloaded = self.mod_store_api.download_mod(url, temp_dir)
+
+            self.after(0, lambda: self._log(f"Downloaded {downloaded.name}, installing..."))
+
+            # Import the downloaded mod
+            if downloaded.suffix.lower() == ".zip":
+                temp_extract = Path(tempfile.mkdtemp(prefix="fm_extract_"))
+                with zipfile.ZipFile(downloaded, "r") as z:
+                    z.extractall(temp_extract)
+
+                # Find manifest
+                candidates = [d for d in temp_extract.iterdir() if d.is_dir() and (d / "manifest.json").exists()]
+                src_folder = candidates[0] if candidates else temp_extract
+            else:
+                src_folder = temp_dir
+
+            newname = install_mod_from_folder(src_folder, None, log=self._log)
+            order = get_load_order()
+            if newname not in order:
+                order.append(newname)
+                set_load_order(order)
+
+            self.after(0, lambda: self.refresh_mod_list())
+            self.after(0, lambda: messagebox.showinfo("Install", f"Successfully installed '{newname}'!"))
+            self.after(0, lambda: self._log(f"Successfully installed {newname} from store."))
+
+        except Exception as e:
+            self.after(0, lambda: messagebox.showerror("Install Error", str(e)))
+            self.after(0, lambda: self._log(f"Install failed: {e}"))
+
+    def on_store_details(self):
+        """Show details for selected store mod."""
+        sel = self.store_tree.selection()
+        if not sel:
+            return
+
+        mod_name = self.store_tree.item(sel[0])["values"][0]
+        mod_data = self.mod_store_api.get_mod_by_name(mod_name)
+
+        if mod_data:
+            self.store_details_text.delete("1.0", tk.END)
+            text = (
+                f"Name: {mod_data.get('name', '?')}\n"
+                f"Version: {mod_data.get('version', '?')}\n"
+                f"Type: {mod_data.get('type', '?')}\n"
+                f"Author: {mod_data.get('author', '?')}\n"
+                f"Downloads: {mod_data.get('downloads', '—')}\n\n"
+                f"Description:\n{mod_data.get('description', 'No description available.')}\n\n"
+                f"Homepage: {mod_data.get('homepage', '—')}\n"
+            )
+            self.store_details_text.insert(tk.END, text)
+
+    def on_store_select_row(self, _event):
+        """Handle store mod selection."""
+        self.on_store_details()
+
+    def refresh_bepinex_status(self):
+        """Update BepInEx installation status."""
+        if not ENHANCED_FEATURES or not self.bepinex_manager:
+            return
+
+        if self.bepinex_manager.is_installed():
+            version = self.bepinex_manager.get_version() or "Unknown"
+            self.bepinex_status_var.set(f"✓ Installed (Version: {version})")
+            self.bepinex_console_var.set(self.bepinex_manager.is_console_enabled())
+        else:
+            self.bepinex_status_var.set("✗ Not Installed")
+
+    def on_bepinex_install(self):
+        """Install BepInEx."""
+        if not ENHANCED_FEATURES or not self.bepinex_manager:
+            return
+
+        archive_path = Path(__file__).parent.parent / "BepInEx_Patched_Win_af0cba7.rar"
+        if not archive_path.exists():
+            messagebox.showerror("Install Error", f"BepInEx archive not found:\n{archive_path}")
+            return
+
+        def progress(msg):
+            self._log(msg)
+
+        try:
+            self.bepinex_manager.install_from_archive(archive_path, progress_callback=progress)
+            self.refresh_bepinex_status()
+            messagebox.showinfo("BepInEx", "BepInEx installed successfully!")
+        except Exception as e:
+            messagebox.showerror("Install Error", str(e))
+
+    def on_bepinex_toggle_console(self):
+        """Toggle BepInEx console logging."""
+        if not ENHANCED_FEATURES or not self.bepinex_manager:
+            return
+
+        enabled = self.bepinex_console_var.get()
+        if self.bepinex_manager.set_console_enabled(enabled):
+            self._log(f"BepInEx console logging {'enabled' if enabled else 'disabled'}.")
+        else:
+            messagebox.showerror("Config Error", "Failed to update BepInEx config.")
+            self.bepinex_console_var.set(not enabled)
+
+    def on_bepinex_open_config(self):
+        """Open BepInEx config file in editor."""
+        if not ENHANCED_FEATURES or not self.bepinex_manager:
+            return
+
+        if self.bepinex_manager.open_config_in_editor():
+            self._log("Opened BepInEx config file.")
+        else:
+            messagebox.showerror("Error", "BepInEx config file not found.")
+
+    def on_bepinex_view_log(self):
+        """View latest BepInEx log."""
+        if not ENHANCED_FEATURES or not self.bepinex_manager:
+            return
+
+        log_path = self.bepinex_manager.get_latest_log_path()
+        if log_path:
+            safe_open_path(log_path)
+        else:
+            messagebox.showinfo("Logs", "No BepInEx log files found.")
+
+    def on_bepinex_open_folder(self):
+        """Open BepInEx folder."""
+        if not ENHANCED_FEATURES or not self.bepinex_manager:
+            return
+
+        if self.bepinex_manager.bepinex_dir.exists():
+            safe_open_path(self.bepinex_manager.bepinex_dir)
+        else:
+            messagebox.showinfo("BepInEx", "BepInEx folder not found.")
+
+    def on_report_bug(self):
+        """Report a bug via Discord."""
+        if not ENHANCED_FEATURES or not self.discord:
+            return
+
+        # Create dialog for bug report
+        win = tk.Toplevel(self)
+        win.title("Report Bug")
+        win.geometry("500x400")
+
+        ttk.Label(win, text="Describe the issue:").pack(padx=10, pady=(10, 5))
+        desc_text = tk.Text(win, height=10)
+        desc_text.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+
+        ttk.Label(win, text="Email (optional):").pack(padx=10, pady=(10, 5))
+        email_var = tk.StringVar()
+        ttk.Entry(win, textvariable=email_var).pack(padx=10, pady=5, fill=tk.X)
+
+        def send_report():
+            description = desc_text.get("1.0", tk.END).strip()
+            if not description:
+                messagebox.showwarning("Report", "Please describe the issue.")
+                return
+
+            email = email_var.get().strip() or None
+
+            # Get log files
+            logs = []
+            if RUN_LOG.exists():
+                logs.append(RUN_LOG)
+            if self.bepinex_manager:
+                logs.extend(self.bepinex_manager.get_log_files())
+
+            try:
+                success = self.discord.report_error(description, logs, VERSION, email)
+                if success:
+                    messagebox.showinfo("Report", "Bug report sent successfully!")
+                    win.destroy()
+                else:
+                    messagebox.showerror("Report", "Failed to send report. Check Discord webhook configuration.")
+            except Exception as e:
+                messagebox.showerror("Report Error", str(e))
+
+        ttk.Button(win, text="Send Report", command=send_report).pack(pady=10)
+
+    def on_submit_mod(self):
+        """Submit a mod to the store via Discord."""
+        if not ENHANCED_FEATURES or not self.discord:
+            return
+
+        # Create dialog for mod submission
+        win = tk.Toplevel(self)
+        win.title("Submit Mod to Store")
+        win.geometry("500x450")
+
+        ttk.Label(win, text="GitHub Repository URL:").pack(padx=10, pady=(10, 5))
+        repo_var = tk.StringVar()
+        ttk.Entry(win, textvariable=repo_var).pack(padx=10, pady=5, fill=tk.X)
+
+        ttk.Label(win, text="Mod Name:").pack(padx=10, pady=(10, 5))
+        name_var = tk.StringVar()
+        ttk.Entry(win, textvariable=name_var).pack(padx=10, pady=5, fill=tk.X)
+
+        ttk.Label(win, text="Author:").pack(padx=10, pady=(10, 5))
+        author_var = tk.StringVar()
+        ttk.Entry(win, textvariable=author_var).pack(padx=10, pady=5, fill=tk.X)
+
+        ttk.Label(win, text="Mod Type:").pack(padx=10, pady=(10, 5))
+        type_var = tk.StringVar(value="ui")
+        ttk.Combobox(win, textvariable=type_var, values=["ui", "graphics", "tactics", "database", "misc"], state="readonly").pack(padx=10, pady=5, fill=tk.X)
+
+        ttk.Label(win, text="Description:").pack(padx=10, pady=(10, 5))
+        desc_text = tk.Text(win, height=5)
+        desc_text.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+
+        ttk.Label(win, text="Contact (optional):").pack(padx=10, pady=(10, 5))
+        contact_var = tk.StringVar()
+        ttk.Entry(win, textvariable=contact_var).pack(padx=10, pady=5, fill=tk.X)
+
+        def send_submission():
+            repo = repo_var.get().strip()
+            name = name_var.get().strip()
+            author = author_var.get().strip()
+            mod_type = type_var.get()
+            description = desc_text.get("1.0", tk.END).strip()
+            contact = contact_var.get().strip() or None
+
+            if not all([repo, name, author, description]):
+                messagebox.showwarning("Submit", "Please fill in all required fields.")
+                return
+
+            try:
+                success = self.discord.submit_mod(repo, name, author, description, mod_type, contact)
+                if success:
+                    messagebox.showinfo("Submit", "Mod submission sent successfully!")
+                    win.destroy()
+                else:
+                    messagebox.showerror("Submit", "Failed to send submission. Check Discord webhook configuration.")
+            except Exception as e:
+                messagebox.showerror("Submit Error", str(e))
+
+        ttk.Button(win, text="Submit Mod", command=send_submission).pack(pady=10)
+
+    def on_generate_template(self):
+        """Generate a mod template."""
+        # Create dialog for template generation
+        win = tk.Toplevel(self)
+        win.title("Generate Mod Template")
+        win.geometry("500x500")
+
+        ttk.Label(win, text="Mod Name:").pack(padx=10, pady=(10, 5))
+        name_var = tk.StringVar()
+        ttk.Entry(win, textvariable=name_var).pack(padx=10, pady=5, fill=tk.X)
+
+        ttk.Label(win, text="Version:").pack(padx=10, pady=(10, 5))
+        version_var = tk.StringVar(value="1.0.0")
+        ttk.Entry(win, textvariable=version_var).pack(padx=10, pady=5, fill=tk.X)
+
+        ttk.Label(win, text="Author:").pack(padx=10, pady=(10, 5))
+        author_var = tk.StringVar()
+        ttk.Entry(win, textvariable=author_var).pack(padx=10, pady=5, fill=tk.X)
+
+        ttk.Label(win, text="Mod Type:").pack(padx=10, pady=(10, 5))
+        type_var = tk.StringVar(value="ui")
+        ttk.Combobox(win, textvariable=type_var, values=["ui", "graphics", "tactics", "database", "misc"], state="readonly").pack(padx=10, pady=5, fill=tk.X)
+
+        ttk.Label(win, text="Description:").pack(padx=10, pady=(10, 5))
+        desc_text = tk.Text(win, height=5)
+        desc_text.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+
+        ttk.Label(win, text="Homepage (optional):").pack(padx=10, pady=(10, 5))
+        homepage_var = tk.StringVar()
+        ttk.Entry(win, textvariable=homepage_var).pack(padx=10, pady=5, fill=tk.X)
+
+        def generate():
+            name = name_var.get().strip()
+            version = version_var.get().strip()
+            author = author_var.get().strip()
+            mod_type = type_var.get()
+            description = desc_text.get("1.0", tk.END).strip()
+            homepage = homepage_var.get().strip()
+
+            if not all([name, version, author, description]):
+                messagebox.showwarning("Generate", "Please fill in all required fields.")
+                return
+
+            # Ask for save location
+            save_path = filedialog.askdirectory(title="Select folder to save template")
+            if not save_path:
+                return
+
+            try:
+                mod_folder = Path(save_path) / name
+                mod_folder.mkdir(exist_ok=True)
+
+                # Create manifest.json
+                manifest = {
+                    "name": name,
+                    "version": version,
+                    "type": mod_type,
+                    "author": author,
+                    "description": description,
+                    "homepage": homepage if homepage else "",
+                    "files": [
+                        {
+                            "source": "your_mod_file_here.bundle",
+                            "target_subpath": "target_file.bundle",
+                            "platform": "windows"
+                        }
+                    ]
+                }
+
+                manifest_path = mod_folder / "manifest.json"
+                with open(manifest_path, 'w', encoding='utf-8') as f:
+                    json.dump(manifest, f, indent=2)
+
+                # Create README
+                readme_path = mod_folder / "README.md"
+                readme_content = f"""# {name}
+
+{description}
+
+## Installation
+1. Use FM Reloaded Mod Manager to install this mod
+2. Or manually copy files to your FM26 installation
+
+## Version
+{version}
+
+## Author
+{author}
+"""
+                with open(readme_path, 'w', encoding='utf-8') as f:
+                    f.write(readme_content)
+
+                messagebox.showinfo("Success", f"Template created at:\n{mod_folder}\n\nAdd your mod files and update manifest.json!")
+                win.destroy()
+
+            except Exception as e:
+                messagebox.showerror("Error", str(e))
+
+        ttk.Button(win, text="Generate Template", command=generate).pack(pady=10)
+
+    def on_settings(self):
+        """Open settings/preferences dialog."""
+        win = tk.Toplevel(self)
+        win.title("Preferences")
+        win.geometry("600x400")
+
+        # Store URL
+        ttk.Label(win, text="Mod Store URL:", font=("", 10, "bold")).pack(padx=10, pady=(10, 5), anchor="w")
+        store_url_var = tk.StringVar(value=get_store_url())
+        ttk.Entry(win, textvariable=store_url_var, width=70).pack(padx=10, pady=5, fill=tk.X)
+
+        ttk.Label(win, text="URL to mods.json file (usually on GitHub raw)", font=("", 8)).pack(padx=10, pady=(0, 10), anchor="w")
+
+        # Discord webhooks
+        ttk.Label(win, text="Discord Integration:", font=("", 10, "bold")).pack(padx=10, pady=(10, 5), anchor="w")
+
+        webhooks = get_discord_webhooks()
+
+        ttk.Label(win, text="Error Report Webhook URL:").pack(padx=10, pady=(5, 2), anchor="w")
+        error_webhook_var = tk.StringVar(value=webhooks['error'])
+        ttk.Entry(win, textvariable=error_webhook_var, width=70).pack(padx=10, pady=2, fill=tk.X)
+
+        ttk.Label(win, text="Mod Submission Webhook URL:").pack(padx=10, pady=(10, 2), anchor="w")
+        mod_webhook_var = tk.StringVar(value=webhooks['mod_submission'])
+        ttk.Entry(win, textvariable=mod_webhook_var, width=70).pack(padx=10, pady=2, fill=tk.X)
+
+        ttk.Label(win, text="Get webhook URLs from Discord server settings → Integrations → Webhooks", font=("", 8)).pack(padx=10, pady=(5, 10), anchor="w")
+
+        # Auto-check for updates
+        auto_check_var = tk.BooleanVar(value=load_config().get("auto_check_updates", True))
+        ttk.Checkbutton(win, text="Automatically check for app updates on startup", variable=auto_check_var).pack(padx=10, pady=10, anchor="w")
+
+        def save_settings():
+            # Save store URL
+            set_store_url(store_url_var.get().strip())
+
+            # Save Discord webhooks
+            set_discord_webhooks(error_webhook_var.get().strip(), mod_webhook_var.get().strip())
+
+            # Save auto-check setting
+            cfg = load_config()
+            cfg["auto_check_updates"] = auto_check_var.get()
+            save_config(cfg)
+
+            # Update runtime instances
+            if self.mod_store_api:
+                self.mod_store_api.set_store_url(store_url_var.get().strip())
+
+            if self.discord:
+                self.discord.set_error_webhook(error_webhook_var.get().strip())
+                self.discord.set_mod_webhook(mod_webhook_var.get().strip())
+
+            messagebox.showinfo("Settings", "Settings saved successfully!")
+            win.destroy()
+
+        # Buttons
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, pady=10)
+        ttk.Button(btn_frame, text="Save", command=save_settings).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.LEFT, padx=5)
+
+    def _auto_check_updates(self):
+        """Silently check for updates on startup."""
+        def check_async():
+            try:
+                updater = AppUpdater(VERSION, "jo13310/FM_Reloaded")
+                has_update, release_info = updater.check_for_updates()
+
+                if has_update:
+                    self.after(0, lambda: self._show_update_dialog(release_info))
+                # If no update, do nothing (silent check)
+
+            except Exception as e:
+                # Silent failure on auto-check
+                self._log(f"Auto-update check failed: {e}")
+
+        threading.Thread(target=check_async, daemon=True).start()
+
+    def on_check_updates(self):
+        """Check for app updates."""
+        if not ENHANCED_FEATURES:
+            return
+
+        self._log("Checking for updates...")
+
+        def check_async():
+            try:
+                updater = AppUpdater(VERSION, "jo13310/FM_Reloaded")
+                has_update, release_info = updater.check_for_updates()
+
+                if has_update:
+                    self.after(0, lambda: self._show_update_dialog(release_info))
+                else:
+                    self.after(0, lambda: messagebox.showinfo("Check for Updates", f"You are running the latest version ({VERSION})."))
+
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("Update Check Failed", f"Failed to check for updates:\n{e}"))
+
+        threading.Thread(target=check_async, daemon=True).start()
+
+    def _show_update_dialog(self, release_info):
+        """Show update available dialog."""
+        win = tk.Toplevel(self)
+        win.title("Update Available")
+        win.geometry("500x400")
+
+        ttk.Label(win, text=f"New Version Available: {release_info['version']}", font=("", 12, "bold")).pack(padx=10, pady=10)
+        ttk.Label(win, text=f"Current Version: {VERSION}").pack(padx=10, pady=(0, 10))
+
+        # Release notes
+        ttk.Label(win, text="Release Notes:", font=("", 10, "bold")).pack(padx=10, pady=(10, 5), anchor="w")
+        notes_text = tk.Text(win, height=12, wrap="word")
+        notes_text.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+        notes_text.insert("1.0", release_info.get('body', 'No release notes available.'))
+        notes_text.config(state="disabled")
+
+        def open_download():
+            import webbrowser
+            webbrowser.open(release_info.get('download_url', release_info.get('html_url', '')))
+            win.destroy()
+
+        # Buttons
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, pady=10)
+        ttk.Button(btn_frame, text="Download Update", command=open_download).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Later", command=win.destroy).pack(side=tk.LEFT, padx=5)
+
+    def on_about(self):
+        """Show about dialog."""
+        about_text = f"""FM Reloaded Mod Manager
+Version {VERSION}
+
+A cross-platform mod manager for Football Manager 2026
+
+Original FM_Reloaded_26 by Justin Levine & FM Match Lab Team
+Enhanced and Forked by GerKo
+
+Features:
+• Mod installation and management
+• Load order control with conflict detection
+• Mod Store browser
+• BepInEx integration
+• Discord integration for bug reports
+
+License: CC BY-SA 4.0 International
+
+GitHub: https://github.com/jo13310/FM_Reloaded
+"""
+        messagebox.showinfo("About FM Reloaded", about_text)
 
 
 # ---- main ----

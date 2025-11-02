@@ -21,8 +21,8 @@ body:
   - type: input
     id: version
     attributes:
-      label: FMMLoader26 version
-      placeholder: "v0.0.2"
+      label: FM Reloaded version
+      placeholder: "v0.5.0"
   - type: textarea
     id: logs
     attributes:

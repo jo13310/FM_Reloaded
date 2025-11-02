@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas, binaries, hiddenimports = collect_all('tkinter')
 
-app_name = "FMMLoader26"
+app_name = "FM_Reloaded_26"
 icon_path = "assets/icon.ico" if sys.platform.startswith("win") else "assets/icon.icns"
 
 a = Analysis(
