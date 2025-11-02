@@ -193,6 +193,8 @@ The **Mod Store** provides access to a curated, trusted repository of mods:
 - View mod details (description, version, author)
 - One-click installation
 - Automatic update notifications
+- ZIP packages are extracted automatically; files are copied according to the manifest's `target_subpath`. Common paths include `BepInEx/plugins/…` for DLLs and `graphics/...` for logo packs.
+- Single-file releases (DLL, FMF, etc.) are supported via a hosted `manifest.json` that maps each asset to its destination. The store entry must include `manifest_url` for these cases.
 
 To configure a custom store URL, go to **Settings** → **Preferences…**
 

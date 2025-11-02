@@ -366,6 +366,9 @@ class ModStoreAPI:
             if not repo or not asset:
                 return None
 
+            if download.get('latest'):
+                return f"https://github.com/{repo}/releases/latest/download/{asset}"
+
             tag = download.get('tag')
             if not tag:
                 version = mod.get('version', '')

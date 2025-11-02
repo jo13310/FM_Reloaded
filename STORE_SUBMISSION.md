@@ -40,7 +40,7 @@ Before submitting, ensure your mod meets these requirements:
 2. **Valid manifest.json**: Must conform to the FM Reloaded format
 3. **README.md**: Clear installation and usage instructions
 4. **LICENSE file**: Open-source or permissive license
-5. **Tagged Release**: At least one GitHub release with your mod as an asset
+5. **Tagged Release**: At least one GitHub release with your mod as an asset (ZIP preferred; single-file assets must provide a manifest URL)
 
 ### Recommended
 
@@ -67,7 +67,12 @@ Each mod in the store is represented as a JSON object:
   "author": "YourName",
   "description": "Brief description of what your mod does",
   "homepage": "https://github.com/yourname/your-mod",
-  "download_url": "https://github.com/yourname/your-mod/releases/download/v1.0.0/your-mod.zip",
+  "download": {
+    "type": "github_release",
+    "repo": "yourname/your-mod",
+    "asset": "your-mod.zip",
+    "tag_prefix": "v"
+  },
   "changelog_url": "https://github.com/yourname/your-mod/blob/main/changelog.md",
   "downloads": 0,
   "date_added": "2025-01-15",
@@ -91,7 +96,7 @@ Each mod in the store is represented as a JSON object:
 | `author` | Yes | Mod creator name |
 | `description` | Yes | 1-2 sentence summary (max 200 chars) |
 | `homepage` | Yes | GitHub repository URL |
-| `download_url` | Yes | Direct link to latest .zip release |
+| `download` | Yes | Download descriptor (see below) |
 | `changelog_url` | No | Link to changelog or release notes |
 | `downloads` | No | Download count (maintained by store admin) |
 | `date_added` | No | Date added to store (YYYY-MM-DD) |
@@ -99,6 +104,24 @@ Each mod in the store is represented as a JSON object:
 | `dependencies` | No | List of required mods |
 | `conflicts` | No | List of incompatible mods |
 | `compatibility` | No | Version requirements |
+| `manifest_url` | Conditional | Required when the release asset is not a `.zip` |
+| `install_notes` | No | Optional short hint about destination (e.g. `BepInEx/plugins`) |
+
+### `download` object
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `type` | Yes | Currently only `github_release` is supported |
+| `repo` | Yes | Repository in `owner/name` form |
+| `asset` | Yes | Exact asset filename (`your-mod.zip`, `Plugin.dll`, etc.) |
+| `tag_prefix` | No | Prefix applied to the manifest version (`v` by default) |
+| `tag` | No | Override tag when releases do not match semantic versioning |
+| `latest` | No | Set to `true` to always follow `releases/latest` |
+
+> **Packaging rules**
+>
+> - Release ZIP files must contain `manifest.json` at the root together with the folder/file structure referenced by the `files` array.  
+> - For single-file assets (for example `YourMod.dll`), publish `manifest.json` in your repository and set `manifest_url` to the raw file. The Mod Manager downloads the asset, stages it in the `source` location defined by the manifest, then copies it to the `target_subpath` (such as `BepInEx/plugins/YourMod.dll`).
 
 ---
 
@@ -189,7 +212,8 @@ Your submission will be validated against these criteria:
 
 - [ ] `name` matches manifest.json
 - [ ] `version` is the latest release
-- [ ] `download_url` points to a valid `.zip` file
+- [ ] `download.asset` references an existing release asset
+- [ ] `manifest_url` is set when the asset is not a `.zip`
 - [ ] `homepage` is a valid GitHub URL
 - [ ] No duplicate entries (same mod name)
 
@@ -340,7 +364,7 @@ FM-Reloaded-Store/
 
 1. **Fill all required fields** accurately
 2. **Use descriptive commit messages**
-3. **Test your download URL** before submitting
+3. **Verify your release asset** exists and matches the `download.asset` entry
 4. **Check for duplicates** (search existing mods)
 5. **Provide contact info** for follow-up
 
@@ -362,19 +386,21 @@ FM-Reloaded-Store/
 **Solution**: Validate JSON syntax, ensure all required fields present
 
 **Reason**: Broken download link
-**Solution**: Verify release tag, ensure `.zip` is uploaded
+**Solution**: Verify the release asset name in GitHub matches `download.asset` (and `latest`/`tag` settings)
 
 **Reason**: Duplicate mod name
 **Solution**: Choose a unique name or coordinate with existing mod author
 
-### Download Link Not Working
-
 - Ensure the release is **public**, not a draft
-- Use the **direct asset download link**:
+- Example direct asset download link with tagged release:
   ```
   https://github.com/user/repo/releases/download/v1.0.0/mod.zip
   ```
-- Not the release page link
+- Latest-channel releases must use the exact asset name:
+  ```
+  https://github.com/user/repo/releases/latest/download/Plugin.dll
+  ```
+- Do not link to the release page itself.
 
 ### Version Mismatch
 
@@ -398,7 +424,13 @@ GitHub repo: `https://github.com/modder/simple-ui-mod`
   "author": "Modder123",
   "description": "Clean and simple UI improvements for better visibility",
   "homepage": "https://github.com/modder/simple-ui-mod",
-  "download_url": "https://github.com/modder/simple-ui-mod/releases/download/v1.0.0/simple-ui-mod.zip"
+  "download": {
+    "type": "github_release",
+    "repo": "modder/simple-ui-mod",
+    "asset": "simple-ui-mod.zip",
+    "tag_prefix": "v"
+  },
+  "install_notes": "Replaces ui-panelids_assets_all.bundle inside the FM data folder."
 }
 ```
 
@@ -415,7 +447,13 @@ GitHub repo: `https://github.com/graphicsteam/mega-logo-pack`
   "author": "GraphicsTeam",
   "description": "Complete logo pack for all European leagues with 4K quality badges",
   "homepage": "https://github.com/graphicsteam/mega-logo-pack",
-  "download_url": "https://github.com/graphicsteam/mega-logo-pack/releases/download/v2.0.1/mega-logo-pack.zip",
+  "download": {
+    "type": "github_release",
+    "repo": "graphicsteam/mega-logo-pack",
+    "asset": "mega-logo-pack.zip",
+    "tag": "release-2026"
+  },
+  "install_notes": "Extracts logos into Documents/Sports Interactive/Football Manager 2026/graphics/logos/premier-league/.",
   "changelog_url": "https://github.com/graphicsteam/mega-logo-pack/blob/main/CHANGELOG.md",
   "downloads": 1543,
   "date_added": "2025-01-01",
@@ -426,6 +464,30 @@ GitHub repo: `https://github.com/graphicsteam/mega-logo-pack`
     "fm_version": "26.0.0",
     "min_loader_version": "0.5.0"
   }
+}
+```
+
+### Example 3: BepInEx Plugin (single DLL)
+
+GitHub repo: `https://github.com/examplemods/fm-pov-camera`
+
+**mods.json entry**:
+```json
+{
+  "name": "Example POV Camera",
+  "version": "1.0.3",
+  "type": "misc",
+  "author": "ExampleMods",
+  "description": "First-person match camera controlled by hotkeys",
+  "homepage": "https://github.com/examplemods/fm-pov-camera",
+  "download": {
+    "type": "github_release",
+    "repo": "examplemods/fm-pov-camera",
+    "asset": "ExamplePovCamera.dll",
+    "latest": true
+  },
+  "manifest_url": "https://raw.githubusercontent.com/examplemods/fm-pov-camera/main/manifest.json",
+  "install_notes": "Copies ExamplePovCamera.dll to BepInEx/plugins/."
 }
 ```
 
@@ -462,7 +524,7 @@ Before submitting, ensure you have:
 - [ ] README.md with installation instructions
 - [ ] LICENSE file
 - [ ] At least one tagged release
-- [ ] Release includes `.zip` file of mod
+- [ ] Release includes a ZIP package or a single asset plus `manifest_url`
 - [ ] Tested on Windows and/or macOS
 - [ ] Descriptive mod description
 - [ ] changelog.md (recommended)

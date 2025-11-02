@@ -112,6 +112,10 @@ The `manifest.json` file is the core of every mod. It tells FM Reloaded how to i
 
 ### Field Descriptions
 
+> **Packaging basics**  
+> • Ship the manifest at the root of your release ZIP. The Mod Manager unpacks the archive first, then applies each entry in `files`.  
+> • For single-file releases (for example a BepInEx DLL), publish the asset alongside a raw `manifest.json` in your repository. The trusted store references both; the manager stages the downloaded asset into the `source` path defined in the manifest before copying it to the `target_subpath`.
+
 #### Required Fields
 
 | Field | Type | Description |
@@ -148,11 +152,42 @@ Each item in the `files` array describes how to install one file:
 
 **Fields**:
 - `source` (required): Path to the file within your mod folder
-- `target_subpath` (required): Where to install relative to FM's data folder
-- `platform` (optional): Which platform this file is for
+- `target_subpath` (required): Destination relative to the FM install or Documents tree
+- `platform` (optional): Platform-specific overrides
   - `"windows"` - Windows only
   - `"mac"` - macOS only
-  - Omit or use `"all"` for cross-platform files
+  - Omit or `"all"` to apply on every platform
+
+**Common destinations**
+
+| Destination | Use case | Example |
+|-------------|----------|---------|
+| `ui-*/…` | Game bundles in `StreamingAssets/aa/Standalone…` | `ui-panelids_assets_all.bundle` |
+| `BepInEx/plugins/…` | Managed plugins | `BepInEx/plugins/ArthurRayPovMod.dll` |
+| `graphics/...` | Logos, kits, faces in Documents | `graphics/logos/premier-league/` |
+| `tactics/...` | Tactic `.fmf` files in Documents | `tactics/4-3-3-attacking.fmf` |
+
+```json
+{
+  "name": "Camera POV",
+  "type": "misc",
+  "files": [
+    {
+      "source": "plugins/CameraPov.dll",
+      "target_subpath": "BepInEx/plugins/CameraPov.dll"
+    }
+  ]
+}
+```
+
+To copy a complete directory tree, point `source` at the folder and end both paths with `/`:
+
+```json
+{
+  "source": "logos/",
+  "target_subpath": "graphics/logos/premier-league/"
+}
+```
 
 ---
 

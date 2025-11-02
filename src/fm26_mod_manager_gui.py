@@ -178,6 +178,24 @@ def set_store_url(url):
     save_config(cfg)
 
 
+def asset_path(filename: str) -> Path:
+    """Resolve an asset path bundled with the application."""
+    candidates = []
+    if hasattr(sys, "_MEIPASS"):
+        base = Path(sys._MEIPASS)
+        candidates.append(base / "assets" / filename)
+        candidates.append(base / filename)
+    script_base = Path(__file__).resolve().parent
+    candidates.append(script_base / "assets" / filename)
+    candidates.append(script_base / filename)
+
+    for cand in candidates:
+        if cand.exists():
+            return cand
+    # Fall back to the script assets path even if it does not yet exist
+    return script_base / "assets" / filename
+
+
 def get_discord_webhooks():
     cfg = load_config()
     return {
@@ -497,6 +515,8 @@ class App(tk.Tk):
         self.title(f"FM Reloaded Mod Manager v{VERSION}")
         self.geometry("1200x900")
         self.minsize(1100, 800)
+        self._icon_image_ref: Optional[tk.PhotoImage] = None
+        self._set_window_icon()
 
         # Initialize enhanced features
         if ENHANCED_FEATURES:
@@ -518,6 +538,25 @@ class App(tk.Tk):
         # Auto-check for updates if enabled
         if ENHANCED_FEATURES and load_config().get("auto_check_updates", True):
             self.after(2000, self._auto_check_updates)  # Check after 2 seconds
+
+    def _set_window_icon(self):
+        """Set application icon for window and task bar."""
+        try:
+            png_path = asset_path("fm_reloaded.png")
+            if png_path.exists():
+                icon_image = tk.PhotoImage(file=str(png_path))
+                self.iconphoto(True, icon_image)
+                self._icon_image_ref = icon_image  # Prevent garbage collection
+        except Exception as exc:
+            print(f"Warning: failed to set PNG icon: {exc}")
+
+        if sys.platform.startswith("win"):
+            try:
+                ico_path = asset_path("icon.ico")
+                if ico_path.exists():
+                    self.iconbitmap(default=str(ico_path))
+            except Exception as exc:
+                print(f"Warning: failed to set ICO icon: {exc}")
 
     # ---- logging ----
     def _log(self, msg: str):
@@ -1161,21 +1200,30 @@ class App(tk.Tk):
 
     def on_show_manifest_help(self):
         txt = (
-            "Each mod must include a manifest.json at its root:\n\n"
+            "Every mod must ship a manifest.json alongside its content.\n\n"
+            "Example (FM data overrides):\n"
             "{\n"
             '  "name": "FM26 UI Pack",\n'
             '  "version": "1.0.0",\n'
             '  "type": "ui",\n'
-            '  "author": "You",\n'
-            '  "homepage": "https://example.com",\n'
-            '  "description": "Replaces panel IDs bundle",\n'
             '  "files": [\n'
-            '    { "source": "ui-panelids_assets_all Mac.bundle", "target_subpath": "ui-panelids_assets_all.bundle", "platform": "mac" },\n'
-            '    { "source": "ui-panelids_assets_all Windows.bundle", "target_subpath": "ui-panelids_assets_all.bundle", "platform": "windows" }\n'
+            '    { "source": "ui-panelids_mac.bundle", "target_subpath": "ui-panelids_assets_all.bundle", "platform": "mac" },\n'
+            '    { "source": "ui-panelids_windows.bundle", "target_subpath": "ui-panelids_assets_all.bundle", "platform": "windows" }\n'
             "  ]\n"
             "}\n\n"
-            "• target_subpath is relative to the Standalone… folder.\n"
-            "• Last-write-wins according to the load order.\n"
+            "BepInEx plugin example:\n"
+            "{\n"
+            '  "name": "Camera POV",\n'
+            '  "type": "misc",\n'
+            '  "files": [\n'
+            '    { "source": "plugins/YourMod.dll", "target_subpath": "BepInEx/plugins/YourMod.dll" }\n'
+            "  ]\n"
+            "}\n\n"
+            "• When the store downloads a .zip, it is extracted before applying these rules.\n"
+            "• For single files (e.g. DLLs), the manifest can be hosted separately and the manager stages the file into the mapped source path prior to install.\n"
+            "• target_subpath is relative to the detected FM folder (or Documents tree for tactics/graphics).\n"
+            "• Directories are created automatically; you can target files such as BepInEx/plugins/YourMod.dll or Documents/Sports Interactive/FM26/tactics/Name.fmf.\n"
+            "• Load order is last-write-wins when multiple mods touch the same target file.\n"
             f"• Mods live in: {MODS_DIR}\n"
             f"• Logs live in: {LOGS_DIR}\n"
         )
@@ -1393,14 +1441,32 @@ class App(tk.Tk):
 
         if mod_data:
             self.store_details_text.delete("1.0", tk.END)
+            download = mod_data.get("download", {}) if isinstance(mod_data.get("download"), dict) else {}
+            asset = download.get("asset")
+            channel = (
+                "latest"
+                if download.get("latest")
+                else download.get("tag")
+                or download.get("tag_prefix", "v")
+            )
+            asset_line = f"Asset: {asset} (channel: {channel})\n" if asset else ""
+            manifest_line = f"Manifest: {mod_data.get('manifest_url')}\n" if mod_data.get("manifest_url") else ""
+            install_line = (
+                f"\nInstall Notes:\n{mod_data.get('install_notes')}\n"
+                if mod_data.get("install_notes")
+                else ""
+            )
             text = (
                 f"Name: {mod_data.get('name', '?')}\n"
                 f"Version: {mod_data.get('version', '?')}\n"
                 f"Type: {mod_data.get('type', '?')}\n"
                 f"Author: {mod_data.get('author', '?')}\n"
-                f"Downloads: {mod_data.get('downloads', '—')}\n\n"
+                f"Downloads: {mod_data.get('downloads', '-')}\n"
+                f"{asset_line}"
+                f"{manifest_line}\n"
                 f"Description:\n{mod_data.get('description', 'No description available.')}\n\n"
-                f"Homepage: {mod_data.get('homepage', '—')}\n"
+                f"Homepage: {mod_data.get('homepage', '-')}\n"
+                f"{install_line}"
             )
             self.store_details_text.insert(tk.END, text)
 

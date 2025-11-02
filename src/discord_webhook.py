@@ -28,7 +28,9 @@ class DiscordWebhook:
         self,
         content: str = "",
         embeds: Optional[List[Dict]] = None,
-        username: Optional[str] = None
+        username: Optional[str] = None,
+        thread_name: Optional[str] = None,
+        thread_id: Optional[str] = None,
     ) -> bool:
         """
         Send a text message to Discord.
@@ -37,6 +39,8 @@ class DiscordWebhook:
             content: Message content (up to 2000 characters)
             embeds: List of embed dictionaries (rich formatting)
             username: Override webhook username
+            thread_name: Optional name to create a thread (threads-enabled channels only)
+            thread_id: Optional id of an existing thread
 
         Returns:
             True if successful, False otherwise
@@ -51,8 +55,15 @@ class DiscordWebhook:
 
         if username:
             payload['username'] = username
+        if thread_name:
+            payload['thread_name'] = thread_name
 
-        return self._send_payload(payload)
+        custom_url = self.webhook_url
+        if thread_id:
+            separator = '&' if '?' in custom_url else '?'
+            custom_url = f"{custom_url}{separator}thread_id={thread_id}"
+
+        return self._send_payload(payload, webhook_override=custom_url)
 
     def send_error_report(
         self,
@@ -120,7 +131,8 @@ class DiscordWebhook:
 
         # For now, send without file attachments (Discord webhooks have limitations)
         # Files would require multipart/form-data which is complex without requests library
-        success = self._send_payload(payload)
+        thread_name = f"Error {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        success = self._send_payload(payload, thread_name=thread_name)
 
         if success and log_files:
             # Send log content as code blocks (fallback method)
@@ -196,7 +208,7 @@ class DiscordWebhook:
 
         return self._send_payload(payload)
 
-    def _send_payload(self, payload: Dict) -> bool:
+    def _send_payload(self, payload: Dict, webhook_override: Optional[str] = None) -> bool:
         """
         Send JSON payload to Discord webhook.
 
@@ -214,7 +226,7 @@ class DiscordWebhook:
 
             data = json.dumps(payload).encode('utf-8')
             request = urllib.request.Request(
-                self.webhook_url,
+                webhook_override or self.webhook_url,
                 data=data,
                 headers=headers,
                 method='POST'
@@ -359,3 +371,4 @@ def initialize_discord(error_webhook: str = "", mod_webhook: str = "") -> Discor
 def get_discord_channels() -> Optional[DiscordChannels]:
     """Get the global Discord channels instance."""
     return _discord_channels
+
