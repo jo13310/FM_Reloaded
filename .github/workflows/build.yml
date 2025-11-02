@@ -146,8 +146,8 @@ jobs:
 
       - name: List downloaded files
         run: |
-          echo "Windows artifacts:"; ls -lah artifacts/windows || true
-          echo "macOS artifacts:";   ls -lah artifacts/macos || true
+          echo "Windows artifacts :"; ls -lah artifacts/windows || true
+          echo "macOS artifacts :";   ls -lah artifacts/macos || true
 
       - name: Create/Update GitHub Release
         uses: softprops/action-gh-release@v2
