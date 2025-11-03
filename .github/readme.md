@@ -21,7 +21,7 @@
 
 **A cross-platform mod manager** for *Football Manager 2026*, enhanced with mod store, BepInEx support, and Discord integration.
 
-**Originally developed by** [Justin Levine](https://justinlevine.me) / notJalco and presented with [FM Match Lab](https://fmmatchlab.co.uk/)
+**Originally developed by** [Justin Levine](https://justinlevine.me) / notJalco. 
 **Enhanced by GerKo** with mod store browser, BepInEx management, Discord integration, and auto-update features
 ___
 
@@ -238,9 +238,9 @@ Discord webhooks can be configured in **Settings** → **Preferences…**
 ## Credits
 
 ### Original Project
-**FM_Reloaded_26** (formerly FMMLoader-26) was originally created by:
+**FM_Reloaded_26** (formerly FMLoader-26) was originally created by:
 - **[Justin Levine](https://justinlevine.me)** ([@notJalco](https://github.com/justinlevinedotme)) - Original creator
-- **[FM Match Lab](https://fmmatchlab.co.uk/)** - Support and presentation
+
 
 ### Enhanced Version
 **Enhanced by GerKo** ([@jo13310](https://github.com/jo13310)) with:
