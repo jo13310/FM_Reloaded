@@ -7,7 +7,7 @@
 </p>
 
 [![License](https://img.shields.io/badge/license-CC%20BY--SA%204.0-blue.svg)](https://creativecommons.org/licenses/by-sa/4.0/)
-[![Version](https://img.shields.io/badge/version-0.5.0-green.svg)]()
+[![Version](https://img.shields.io/badge/version-0.6.0-green.svg)]()
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)]()
 
 **An enhanced, cross-platform mod manager for Football Manager 2026**
@@ -33,14 +33,17 @@ FM Reloaded Mod Manager is a powerful, user-friendly tool for managing your Foot
 - **Cross-Platform**: Runs on Windows and macOS
 - **Automatic FM Folder Detection**: Finds your FM installation automatically
 - **Easy Mod Import**: Drag & drop .zip files or folders
-- **Enable/Disable Mods**: One-click mod management
+- **Instant Enable/Disable**: One-click mod management with immediate apply
+- **Automatic Backups**: Creates `.bck` backups alongside original files for easy restoration
 - **Load Order Control**: Organize mod priority with last-write-wins system
 - **Conflict Manager**: Detects overlapping files before applying
 - **Restore Points**: One-click rollback to previous states
 - **Type-Aware Installation**:
   - UI/Bundles → Game data folder
+  - Camera/Plugins → BepInEx/plugins (requires BepInEx)
   - Tactics → Documents/Sports Interactive/FM26/tactics
   - Graphics → Documents/Sports Interactive/FM26/graphics (auto-routing for kits, faces, logos)
+  - Database → Documents/Sports Interactive/FM26/editor data
 
 ### Enhanced Features (New!)
 - **Mod Store Browser**: Browse and install mods directly from a trusted repository
@@ -83,9 +86,10 @@ FM Reloaded Mod Manager is a powerful, user-friendly tool for managing your Foot
    - **From Store**: Go to "Mod Store" tab → Browse → Click "Install Selected"
 
 3. **Manage Mods**
-   - **Enable/Disable**: Select mod → Click "Enable (mark)" or "Disable (unmark)"
+   - **Enable**: Select mod → Click "Enable" (immediately installs files and creates backups)
+   - **Disable**: Select mod → Click "Disable" (immediately removes files and restores backups)
    - **Change Load Order**: Select mod → Click "Up (Order)" or "Down (Order)"
-   - **Apply Changes**: Click "Apply Order" or press `F5`
+   - **Delete**: Select mod → Click "Delete" (automatically disables first, then removes mod)
 
 4. **Check for Updates**
    - Mods with updates show "⬆" in the Update column
@@ -237,7 +241,7 @@ The mod manager can automatically check for new releases:
 {
   "name": "Your Mod Name",
   "version": "1.0.0",
-  "type": "ui|graphics|tactics|database|misc",
+  "type": "ui|graphics|tactics|database|camera|misc",
   "author": "Your Name",
   "homepage": "https://github.com/yourname/your-mod",
   "description": "Brief description of your mod",
@@ -250,6 +254,14 @@ The mod manager can automatically check for new releases:
   ]
 }
 ```
+
+**Supported Mod Types:**
+- `ui` - UI modifications (bundles in game data folder)
+- `graphics` - Graphics packs (kits, faces, logos)
+- `tactics` - Tactic files (.fmf)
+- `database` - Database/editor files (.dbc, .lnc, .edt)
+- `camera` - Camera plugins (BepInEx .dll files)
+- `misc` - Other modifications
 
 3. **Required Fields**
    - `name`: Mod display name
@@ -305,9 +317,36 @@ Configuration and mod data are stored in:
 Contains:
 - `config.json` - App configuration
 - `mods/` - Installed mods
-- `backups/` - Original file backups
+- `backups/` - Legacy backup storage
 - `restore_points/` - Timestamped snapshots
 - `logs/` - Activity logs
+
+**Note**: Backups are now stored alongside original files with `.bck` extension (e.g., `gamemodules_assets_match.bundle.bck`) for easier restoration and transparency.
+
+### Backup System
+
+The mod manager uses an intelligent backup system to protect your game files:
+
+**How it works:**
+1. **Enable Mod**: When you enable a mod that replaces a game file, the original is automatically backed up:
+   - Example: `gamemodules_assets_match.bundle` → `gamemodules_assets_match.bundle.bck`
+   - Backup created only if it doesn't exist (preserves original game file)
+   - Stored in the same directory as the original for transparency
+
+2. **Disable Mod**: When you disable a mod:
+   - Modded file is removed
+   - Original file is restored from `.bck` backup
+   - `.bck` file is kept for future enable/disable cycles
+
+3. **Delete Mod**: When you delete a mod:
+   - Mod is automatically disabled first (removes files, restores originals)
+   - `.bck` backups are cleaned up after successful restore
+   - If restore fails, backups are preserved for safety
+
+**Manual Restoration:**
+If you need to manually restore a file, simply:
+1. Delete the modded file (e.g., `gamemodules_assets_match.bundle`)
+2. Rename the backup (e.g., `gamemodules_assets_match.bundle.bck` → `gamemodules_assets_match.bundle`)
 
 ### Dependencies
 
@@ -358,6 +397,21 @@ See [LICENSE](LICENSE) for full details.
 ---
 
 ## Changelog
+
+### v0.6.0 (Latest Release)
+- **Instant Apply**: Enable/Disable buttons now apply changes immediately (no separate Apply button needed)
+- **Improved Backup System**: Backups stored alongside originals with `.bck` extension for transparency
+- **Camera Mod Support**: Full support for BepInEx camera plugins (ArthurRay, TorojoH, Brululul)
+- **Enhanced Security**: Improved file deletion validation and path traversal protection
+- **Database Mod Support**: Real name fixes and licensing file management (NameFix FM26)
+- **Automatic Cleanup on Delete**: Safely removes plugin files and restores backups when deleting mods
+- **Shared Path Routing**: Proper routing for database mods in `shared/data/database/` directory
+- **Direct Download Support**: Added support for direct file URLs in mod store
+- **Bug Fixes**:
+  - Fixed lambda closure bug causing "Install failed: None" errors
+  - Fixed camera mod installation missing config_target parameter
+  - Fixed security validation using wrong game root directory
+  - Fixed deletion not cleaning up enabled plugins properly
 
 ### v0.5.0 (Enhanced Release)
 - **Mod Store Integration**: Browse, search, and install mods directly from app
