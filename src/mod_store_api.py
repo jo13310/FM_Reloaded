@@ -407,6 +407,119 @@ class ModStoreAPI:
 
         return None
 
+    def increment_download_count(self, mod_name: str, tracking_api_url: Optional[str] = None) -> bool:
+        """
+        Increment the download count for a mod via secure tracking API.
+
+        SECURITY: No GitHub tokens needed in the app!
+        The tracking API (Cloudflare Worker) handles authentication securely.
+
+        Args:
+            mod_name: Name of the mod that was downloaded
+            tracking_api_url: URL of the tracking API endpoint
+                             Default: https://fm-track.fmreloaded.workers.dev/download
+                             (Configurable for self-hosted instances)
+
+        Returns:
+            True if successful, False otherwise
+
+        Bot Protection (handled by tracking API):
+        - Rate limiting by IP address
+        - Cloudflare bot protection
+        - Changes logged in git history
+        - Only increments by 1 per call
+        """
+        # Default tracking API URL
+        if not tracking_api_url:
+            tracking_api_url = "https://fm-reloaded-tracker.jonathanllamas13310.workers.dev/download"
+
+        # Check for local throttle cache to prevent spam
+        throttle_key = f"{mod_name}_download_increment"
+        if self._should_throttle(throttle_key, hours=1):
+            # Silent throttle - already tracked recently
+            return True  # Return True to avoid error logs
+
+        try:
+            # Simple POST request with mod name
+            payload = json.dumps({"mod_name": mod_name}).encode('utf-8')
+
+            request = urllib.request.Request(
+                tracking_api_url,
+                data=payload,
+                headers={
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'FMReloaded-ModManager/1.0'
+                }
+            )
+
+            with urllib.request.urlopen(request, timeout=5) as response:
+                status = response.status
+
+            if status == 200:
+                # Mark as throttled locally
+                self._mark_throttled(throttle_key)
+
+                # Invalidate cache so next fetch gets updated count
+                self._invalidate_cache()
+
+                return True
+            elif status == 429:
+                # Rate limited by server - mark as throttled
+                self._mark_throttled(throttle_key)
+                return True  # Silent - don't report as error
+            else:
+                return False
+
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                # Rate limited - mark as throttled and succeed silently
+                self._mark_throttled(throttle_key)
+                return True
+            # Other errors fail silently (download tracking is non-critical)
+            return False
+
+        except Exception:
+            # Network error or timeout - fail silently
+            return False
+
+    def _should_throttle(self, key: str, hours: int = 1) -> bool:
+        """
+        Check if an action should be throttled based on last execution time.
+
+        Args:
+            key: Unique identifier for the action
+            hours: Throttle duration in hours
+
+        Returns:
+            True if action should be throttled (recently executed)
+        """
+        throttle_file = self.cache_dir / f"throttle_{key}.json"
+
+        if not throttle_file.exists():
+            return False
+
+        try:
+            with open(throttle_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            last_time = data.get('timestamp', 0)
+            age_hours = (time.time() - last_time) / 3600
+
+            return age_hours < hours
+
+        except (json.JSONDecodeError, IOError):
+            return False
+
+    def _mark_throttled(self, key: str) -> None:
+        """Mark an action as executed for throttling purposes."""
+        throttle_file = self.cache_dir / f"throttle_{key}.json"
+
+        try:
+            with open(throttle_file, 'w', encoding='utf-8') as f:
+                json.dump({'timestamp': time.time()}, f)
+        except IOError:
+            pass  # Non-critical
+
 
 # Convenience functions for simple usage
 def get_store_mods(force_refresh: bool = False) -> List[Dict]:

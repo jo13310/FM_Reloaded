@@ -56,7 +56,22 @@ class BepInExManager:
         if not self.is_installed():
             return None
 
-        # Try to read version from changelog or core files
+        # First try to read from LogOutput.log (most reliable source)
+        log_path = self.get_latest_log_path()
+        if log_path and log_path.exists():
+            try:
+                with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    first_line = f.readline().strip()
+                    if first_line and "BepInEx" in first_line:
+                        # Extract version from line like "BepInEx 6.0.0.1234 - Football Manager 26"
+                        parts = first_line.split()
+                        for i, part in enumerate(parts):
+                            if part == "BepInEx" and i + 1 < len(parts):
+                                return parts[i + 1]
+            except Exception:
+                pass
+
+        # Fallback: Try to read version from changelog or core files
         changelog = self.bepinex_dir / "changelog.txt"
         if changelog.exists():
             try:

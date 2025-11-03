@@ -1,0 +1,20 @@
+{
+  "_comment": "FM Reloaded Mod Manager Configuration",
+  "_instructions": "Copy this file to 'config.json' and customize your settings",
+
+  "target_path": "",
+  "_target_path_note": "Auto-detected path to FM26 StandaloneWindows64 folder (usually auto-filled)",
+
+  "enabled_mods": [],
+  "_enabled_mods_note": "List of currently enabled mod names (managed automatically)",
+
+  "load_order": [],
+  "_load_order_note": "Order in which mods should be loaded (managed automatically)",
+
+  "theme": "cosmo",
+  "_theme_note": "UI theme: cosmo, flatly, litera, minty, pulse, sandstone, united, yeti (light), darkly, cyborg, superhero, solar, vapor (dark)",
+
+  "tracking_api_url": "https://fm-track.fmreloaded.workers.dev/download",
+  "_tracking_api_url_note": "OPTIONAL: Custom tracking API endpoint (for self-hosted instances only)",
+  "_tracking_security_note": "No GitHub tokens needed! Download tracking is handled securely by the tracking API."
+}

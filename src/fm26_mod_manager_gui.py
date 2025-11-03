@@ -7,6 +7,9 @@
 # - Restore points & rollback
 # - Finder-safe file operations on macOS (no -R reveals)
 # - Footer text credit line
+# - Enhanced features: Mod Store, BepInEx, Updates, Discord integration
+# - Improved conflict detection and file management
+# - Delete functionality for complete mod removal
 
 import os, sys, json, shutil, hashlib, webbrowser, subprocess, zipfile, tempfile
 from typing import List, Optional
@@ -25,6 +28,17 @@ except ImportError:
     from tkinter import ttk
     TTKBOOTSTRAP_AVAILABLE = False
     print("Warning: ttkbootstrap not available, using standard ttk")
+
+# Import core modules
+from core.config_manager import ConfigManager, asset_path
+from core.path_resolver import (
+    _platform_tag, default_candidates, detect_fm_path, fm_user_dir,
+    validate_path_safety, resolve_target, get_install_dir_for_type
+)
+from core.security_utils import (
+    safe_extract_zip, safe_delete_path, safe_copy, _copy_any,
+    backup_original, find_latest_backup_for_filename
+)
 
 # Import new modules
 try:
@@ -75,6 +89,7 @@ def appdata_dir() -> Path:
 
 BASE_DIR = appdata_dir()
 CONFIG_PATH = BASE_DIR / "config.json"
+config = ConfigManager(CONFIG_PATH)  # Global config manager instance
 BACKUP_DIR = BASE_DIR / "backups"
 MODS_DIR = BASE_DIR / "mods"
 LOGS_DIR = BASE_DIR / "logs"
@@ -133,155 +148,6 @@ _init_storage()
 
 
 # -------------
-# Config I/O
-# -------------
-def load_config():
-    if CONFIG_PATH.exists():
-        try:
-            return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            return {}
-    return {}
-
-
-def save_config(cfg):
-    CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-
-
-def get_target() -> Path | None:
-    p = load_config().get("target_path")
-    return Path(p) if p else None
-
-
-def set_target(path: Path):
-    cfg = load_config()
-    cfg["target_path"] = str(path)
-    save_config(cfg)
-
-
-def get_enabled_mods():
-    return load_config().get("enabled_mods", [])
-
-
-def set_enabled_mods(mods):
-    cfg = load_config()
-    cfg["enabled_mods"] = mods
-    save_config(cfg)
-
-
-def get_load_order():
-    return load_config().get("load_order", [])
-
-
-def set_load_order(order):
-    cfg = load_config()
-    cfg["load_order"] = order
-    save_config(cfg)
-
-
-def get_last_applied_mods() -> List[str]:
-    """Return the list of mods that were last applied to the game files."""
-    return load_config().get("last_applied_mods", [])
-
-
-def set_last_applied_mods(mods: List[str]):
-    """Persist the list of mods that were last applied to the game files."""
-    cfg = load_config()
-    cfg["last_applied_mods"] = list(mods)
-    save_config(cfg)
-
-
-def get_store_url():
-    return load_config().get("store_url", "https://raw.githubusercontent.com/jo13310/FM_Reloaded_Trusted_Store/main/mods.json")
-
-
-def set_store_url(url):
-    cfg = load_config()
-    cfg["store_url"] = url
-    save_config(cfg)
-
-
-def asset_path(filename: str) -> Path:
-    """Resolve an asset path bundled with the application."""
-    candidates = []
-    if hasattr(sys, "_MEIPASS"):
-        base = Path(sys._MEIPASS)
-        candidates.append(base / "assets" / filename)
-        candidates.append(base / filename)
-    script_base = Path(__file__).resolve().parent
-    candidates.append(script_base / "assets" / filename)
-    candidates.append(script_base / filename)
-
-    for cand in candidates:
-        if cand.exists():
-            return cand
-    # Fall back to the script assets path even if it does not yet exist
-    return script_base / "assets" / filename
-
-
-def get_discord_webhooks():
-    cfg = load_config()
-    return {
-        'error': cfg.get("discord_error_webhook", "https://discord.com/api/webhooks/1434612338970857474/D0pdw_G1lltO3ylLJv5DFu6aMXAgTrdqzH8iH-KUsyDmiKLQ5YYBqFRvdhI0S62tBNPp"),
-        'mod_submission': cfg.get("discord_mod_webhook", "https://discord.com/api/webhooks/1434612412467904652/iF2wgQfFJoQRzXYzQZ-UtKfVDEAWSF-V-OLqp0MWl1BOGvda2ue4-SFaPVXxt77Eirxe")
-    }
-
-
-def set_discord_webhooks(error_url, mod_url):
-    cfg = load_config()
-    cfg["discord_error_webhook"] = error_url
-    cfg["discord_mod_webhook"] = mod_url
-    save_config(cfg)
-
-
-# -----------------------
-# Game detection (common)
-# -----------------------
-def default_candidates():
-    """Try to discover the 'Standalone...' asset folder by platform."""
-    home = Path.home()
-    out = []
-    if sys.platform.startswith("win"):
-        steam = (
-            Path(os.getenv("PROGRAMFILES(X86)", "C:/Program Files (x86)"))
-            / "Steam/steamapps/common/Football Manager 26"
-        )
-        epic = (
-            Path(os.getenv("PROGRAMFILES", "C:/Program Files"))
-            / "Epic Games/Football Manager 26"
-        )
-        for base in (steam, epic):
-            for sub in (
-                "fm_Data/StreamingAssets/aa/StandaloneWindows64",
-                "data/StreamingAssets/aa/StandaloneWindows64",
-            ):
-                p = base / sub
-                if p.exists():
-                    out.append(p)
-    else:
-        # macOS
-        for p in (
-            home
-            / "Library/Application Support/Steam/steamapps/common/Football Manager 26/fm.app/Contents/Resources/Data/StreamingAssets/aa/StandaloneOSX",
-            home
-            / "Library/Application Support/Steam/steamapps/common/Football Manager 26/fm_Data/StreamingAssets/aa/StandaloneOSXUniversal",
-            home
-            / "Library/Application Support/Epic/Football Manager 26/fm_Data/StreamingAssets/aa/StandaloneOSXUniversal",
-        ):
-            if p.exists():
-                out.append(p)
-    return out
-
-
-def detect_and_set():
-    c = default_candidates()
-    if c:
-        set_target(c[0])
-        return c[0]
-    return None
-
-
-# -------------
 # Manifest I/O
 # -------------
 def read_manifest(mod_dir: Path):
@@ -304,421 +170,13 @@ def read_manifest(mod_dir: Path):
     return data
 
 
-def fm_user_dir():
-    """Return FM user folder (for tactics, skins, graphics, etc.)."""
-    if sys.platform.startswith("win"):
-        return Path.home() / "Documents" / "Sports Interactive" / "Football Manager 26"
-    else:
-        # macOS
-        return (
-            Path.home()
-            / "Library/Application Support/Sports Interactive/Football Manager 26"
-        )
-
-
-################################################################################
-# SECURITY FUNCTIONS
-################################################################################
-# This section contains security-hardened functions to prevent common
-# vulnerabilities in file operations and mod management.
-#
-# Security Threats Mitigated:
-# ---------------------------
-# 1. Path Traversal (CWE-22): Malicious mods using "../" to escape directories
-# 2. ZIP Bombs (CWE-409): Compressed files that expand to huge sizes
-# 3. Symlink Attacks (CWE-59): Symlinks pointing to sensitive system files
-# 4. Arbitrary File Write (CWE-73): Writing to unauthorized locations
-# 5. Resource Exhaustion (CWE-400): Excessive file sizes consuming disk space
-#
-# Security Functions Overview:
-# ----------------------------
-# - validate_path_safety(): Ensures paths stay within allowed directories
-# - safe_extract_zip(): ZIP extraction with bomb detection and path validation
-# - safe_delete_path(): File/directory deletion with symlink protection
-# - safe_copy(): Secure file copying with size limits and validation
-#
-# Usage Guidelines:
-# -----------------
-# - Always use these functions instead of raw shutil/pathlib operations
-# - Never disable security checks without thorough security review
-# - Log all security violations for audit purposes
-# - Keep allowed_root parameters as restrictive as possible
-#
-# References:
-# -----------
-# - OWASP Top 10: https://owasp.org/www-project-top-ten/
-# - CWE-22: Path Traversal
-# - CWE-409: Improper Handling of Highly Compressed Data
-################################################################################
-
-
-def safe_extract_zip(zip_path: Path, dest: Path, max_size_bytes: int = 500_000_000) -> None:
-    """
-    Safely extract ZIP file with security validations.
-
-    Args:
-        zip_path: Path to ZIP file
-        dest: Destination directory
-        max_size_bytes: Maximum total uncompressed size (default 500MB)
-
-    Raises:
-        ValueError: If ZIP contains malicious content
-        zipfile.BadZipFile: If ZIP is corrupted
-
-    Security checks:
-    - Path traversal protection
-    - ZIP bomb detection (size limits)
-    - Symlink detection
-    - Absolute path rejection
-    """
-    dest = dest.resolve()
-    total_size = 0
-
-    with zipfile.ZipFile(zip_path, 'r') as z:
-        # First pass: validate all members
-        for member in z.namelist():
-            info = z.getinfo(member)
-
-            # Check for ZIP bomb
-            total_size += info.file_size
-            if total_size > max_size_bytes:
-                raise ValueError(
-                    f"ZIP file too large: {total_size:,} bytes exceeds limit of {max_size_bytes:,} bytes. "
-                    "This may be a ZIP bomb attack."
-                )
-
-            # Check for path traversal
-            member_path = (dest / member).resolve()
-            try:
-                member_path.relative_to(dest)
-            except ValueError:
-                raise ValueError(
-                    f"Security: ZIP contains path traversal: '{member}' "
-                    f"would extract outside destination directory"
-                )
-
-            # Check for absolute paths
-            if member.startswith("/") or member.startswith("\\") or ":" in member:
-                raise ValueError(f"Security: ZIP contains absolute path: '{member}'")
-
-            # Check for suspicious patterns
-            if ".." in member:
-                raise ValueError(f"Security: ZIP contains suspicious path: '{member}'")
-
-        # Second pass: extract if all validations passed
-        for member in z.namelist():
-            z.extract(member, dest)
-
-
-def safe_delete_path(path: Path, allow_symlink_delete: bool = False) -> bool:
-    """
-    Safely delete a file or directory with security checks.
-
-    Security checks:
-    - Symlink detection (optionally reject symlinks)
-    - Existence validation
-
-    Args:
-        path: Path to delete
-        allow_symlink_delete: If False, refuse to delete symlinks
-
-    Returns:
-        True if deleted successfully, False otherwise
-    """
-    if not path.exists() and not path.is_symlink():
-        return False
-
-    # Security: Detect and optionally reject symlinks
-    if path.is_symlink() and not allow_symlink_delete:
-        raise ValueError(
-            f"Security: Refusing to delete symlink without explicit permission: {path}"
-        )
-
-    try:
-        if path.is_dir() and not path.is_symlink():
-            shutil.rmtree(path)
-        else:
-            path.unlink()
-        return True
-    except Exception as e:
-        # Log but don't expose internal paths in error
-        return False
-
-
-def safe_copy(
-    src: Path,
-    dst: Path,
-    allowed_dst_root: Path | None = None,
-    max_file_size: int = 100_000_000,  # 100MB per file
-    follow_symlinks: bool = False,
-) -> None:
-    """
-    Safely copy file or directory with security validations.
-
-    Security checks:
-    - Path validation against allowed destination root
-    - Symlink detection (optionally refuse to copy symlinks)
-    - File size limits
-
-    Args:
-        src: Source path to copy from
-        dst: Destination path to copy to
-        allowed_dst_root: If provided, validate dst is within this directory
-        max_file_size: Maximum file size in bytes (default 100MB)
-        follow_symlinks: If False, refuse to copy symlinks
-
-    Raises:
-        ValueError: If security validations fail
-        FileNotFoundError: If source doesn't exist
-    """
-    if not src.exists():
-        raise FileNotFoundError(f"Source path does not exist: {src}")
-
-    # Validate destination path if root provided
-    if allowed_dst_root:
-        validate_path_safety(dst, allowed_dst_root, "copy destination")
-
-    # Security: Check for symlinks
-    if src.is_symlink() and not follow_symlinks:
-        raise ValueError(f"Security: Refusing to copy symlink: {src}")
-
-    # Single file copy
-    if src.is_file():
-        # Security: Check file size
-        size = src.stat().st_size
-        if size > max_file_size:
-            raise ValueError(
-                f"Security: File too large: {size:,} bytes exceeds {max_file_size:,} byte limit"
-            )
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst, follow_symlinks=follow_symlinks)
-        return
-
-    # Directory copy
-    if src.is_dir():
-        dst.mkdir(parents=True, exist_ok=True)
-        for child in src.rglob("*"):
-            # Skip symlinks if not following them
-            if child.is_symlink() and not follow_symlinks:
-                continue
-
-            rel = child.relative_to(src)
-            out = dst / rel
-
-            # Validate each output path if root provided
-            if allowed_dst_root:
-                validate_path_safety(out, allowed_dst_root, f"copy destination ({rel})")
-
-            if child.is_dir():
-                out.mkdir(parents=True, exist_ok=True)
-            elif child.is_file():
-                # Security: Check file size
-                size = child.stat().st_size
-                if size > max_file_size:
-                    raise ValueError(
-                        f"Security: File too large: {rel} ({size:,} bytes exceeds {max_file_size:,} byte limit)"
-                    )
-                out.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(child, out, follow_symlinks=follow_symlinks)
-
-
-def _copy_any(src: Path, dst: Path):
-    """
-    Merge-copy src -> dst.
-    - If src is a file: copy2(src, dst)
-    - If src is a directory: recursively copy its contents into dst (dirs_exist_ok)
-
-    NOTE: This is the legacy unsafe version. Use safe_copy() for new code.
-    """
-    if src.is_dir():
-        dst.mkdir(parents=True, exist_ok=True)
-        for child in src.rglob("*"):
-            rel = child.relative_to(src)
-            out = dst / rel
-            if child.is_dir():
-                out.mkdir(parents=True, exist_ok=True)
-            else:
-                out.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(child, out)
-    else:
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-
-
-def _game_root_from_target(base: Path) -> Path:
-    base_path = Path(base).resolve()
-    removable = {
-        "standalonewindows64",
-        "standaloneosx",
-        "standalonelinux64",
-        "aa",
-        "streamingassets",
-        "fm_data",
-        "data",
-    }
-    current = base_path
-    while current.name.lower() in removable and current.parent != current:
-        current = current.parent
-    return current
-
-
-def validate_path_safety(target: Path, allowed_root: Path, description: str = "path") -> Path:
-    """
-    Validate that target path is within allowed root directory.
-    Prevents path traversal attacks.
-
-    Args:
-        target: The path to validate
-        allowed_root: The root directory that target must be within
-        description: Description for error messages
-
-    Returns:
-        Resolved target path if valid
-
-    Raises:
-        ValueError: If path escapes allowed_root
-    """
-    try:
-        target_resolved = target.resolve()
-        allowed_resolved = allowed_root.resolve()
-        target_resolved.relative_to(allowed_resolved)
-        return target_resolved
-    except ValueError:
-        raise ValueError(
-            f"Security: {description} escapes allowed directory. "
-            f"Target: {target}, Allowed root: {allowed_root}"
-        )
-
-
-def resolve_target(base: Path, sub: str) -> Path:
-    """
-    Resolve target path handling special prefixes with security validation.
-    - BepInEx/ → FM root/BepInEx/
-    - data/ → FM root/data/
-    - graphics/, tactics/, editor data/ → Documents folder
-    - Otherwise → relative to base
-
-    Security: Validates paths don't escape their designated directories.
-    """
-    base = Path(base)
-    sub_path = Path(sub)
-    normalized = str(sub_path.as_posix())
-
-    # Check for obviously malicious patterns
-    if ".." in normalized or normalized.startswith("/") or normalized.startswith("\\"):
-        raise ValueError(f"Invalid path in manifest: {sub}")
-
-    # BepInEx paths go to FM game root (from stored target)
-    if normalized.startswith("BepInEx/") or normalized.startswith("BepInEx\\"):
-        # Get FM root by walking up from stored target (StandaloneWindows64)
-        stored_target = get_target()
-        if stored_target and stored_target.exists():
-            root = _game_root_from_target(stored_target)
-        else:
-            # Fallback: try to traverse from base
-            root = _game_root_from_target(base)
-
-        target = root / Path(*normalized.split("/"))
-        # Validate path stays within FM root
-        return validate_path_safety(target, root, "BepInEx path")
-
-    # data/ paths go to FM root
-    if normalized.startswith("data/") or normalized.startswith("data\\"):
-        # Get FM root by walking up from stored target (StandaloneWindows64)
-        stored_target = get_target()
-        if stored_target and stored_target.exists():
-            root = _game_root_from_target(stored_target)
-        else:
-            root = _game_root_from_target(base)
-
-        target = root / Path(*normalized.split("/"))
-        return validate_path_safety(target, root, "data path")
-
-    # Documents-relative paths
-    user_dir = fm_user_dir()
-    if normalized.startswith("graphics/") or normalized.startswith("graphics\\"):
-        target = user_dir / Path(*normalized.split("/"))
-        return validate_path_safety(target, user_dir, "graphics path")
-    if normalized.startswith("tactics/") or normalized.startswith("tactics\\"):
-        target = user_dir / Path(*normalized.split("/"))
-        return validate_path_safety(target, user_dir, "tactics path")
-    if normalized.startswith("editor data/") or normalized.startswith("editor data\\"):
-        target = user_dir / Path(*normalized.split("/"))
-        return validate_path_safety(target, user_dir, "editor data path")
-
-    # Default: relative to base
-    target = base / sub_path
-    return validate_path_safety(target, base, "target path")
-
-
-def get_target_for_type(mod_type: str, mod_name: str = "") -> Path:
-    """
-    Return the appropriate install directory depending on mod type and mod name.
-    Auto-creates /graphics and its subfolders (kits, faces, logos) if missing.
-    """
-    base = fm_user_dir()
-    graphics_base = base / "graphics"
-    mod_type = (mod_type or "").lower()
-    mod_name = (mod_name or "").lower()
-
-    # UI/bundle mods go to the main FM install location (StandaloneWindows64)
-    if mod_type in ("ui", "bundle"):
-        return get_target()
-
-    # Tactics mods go to the user's tactics folder
-    if mod_type == "tactics":
-        path = base / "tactics"
-        path.mkdir(parents=True, exist_ok=True)
+def detect_fm_path_and_save():
+    """Helper to detect FM path and save to config."""
+    path = detect_fm_path()
+    if path:
+        config.target_path = path
         return path
-
-    # Graphics and its subtypes
-    if mod_type == "graphics":
-        graphics_base.mkdir(parents=True, exist_ok=True)
-        if any(x in mod_name for x in ("kit", "kits")):
-            path = graphics_base / "kits"
-        elif any(x in mod_name for x in ("face", "faces", "portraits")):
-            path = graphics_base / "faces"
-        elif any(x in mod_name for x in ("logo", "logos", "badges")):
-            path = graphics_base / "logos"
-        else:
-            path = graphics_base
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    # Database/editor mods
-    if mod_type == "database":
-        path = base / "editor data"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
-    # Default fallback (misc mods)
-    base.mkdir(parents=True, exist_ok=True)
-    return base
-
-
-# ----------
-# Backups
-# ----------
-def backup_original(target_file: Path):
-    if not Path(target_file).exists():
-        return None
-    h = hashlib.sha256(str(target_file).encode("utf-8")).hexdigest()[:10]
-    dest = BACKUP_DIR / f"{Path(target_file).name}.{h}.bak"
-    i, final = 1, dest
-    while final.exists():
-        final = BACKUP_DIR / f"{dest.name}.{i}"
-        i += 1
-    shutil.copy2(target_file, final)
-    return final
-
-
-def find_latest_backup_for_filename(filename: str):
-    cands = sorted(
-        [p for p in BACKUP_DIR.glob(f"{filename}*") if p.is_file()],
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    return cands[0] if cands else None
+    return None
 
 
 # -------------
@@ -730,9 +188,9 @@ def enable_mod(mod_name: str, log):
         raise FileNotFoundError(f"Mod not found: {mod_name} in {MODS_DIR}")
     mf = read_manifest(mod_dir)
 
-    # Get type-aware base directory (FIXED: was using get_target() which always returned StandaloneWindows64)
+    # Get type-aware base directory (FIXED: was using config.target_path which always returned StandaloneWindows64)
     mod_type = mf.get("type", "misc")
-    base = get_target_for_type(mod_type, mf.get("name", mod_name))
+    base = get_install_dir_for_type(mod_type, mf.get("name", mod_name))
 
     if not base or not base.exists():
         raise RuntimeError("No valid FM26 target set. Use Detect or Set Target.")
@@ -764,7 +222,7 @@ def enable_mod(mod_name: str, log):
         try:
             tgt.parent.mkdir(parents=True, exist_ok=True)
             if tgt.exists():
-                b = backup_original(tgt)
+                b = backup_original(tgt, BACKUP_DIR)
                 log(f"  [backup] {tgt_rel}  ←  {b.name if b else 'skipped'}")
                 backed_up += 1
             # Use _copy_any() instead of shutil.copy2() to support directories
@@ -783,9 +241,9 @@ def disable_mod(mod_name: str, log):
     mod_dir = MODS_DIR / mod_name
     mf = read_manifest(mod_dir)
 
-    # Get type-aware base directory (FIXED: was using get_target() which always returned StandaloneWindows64)
+    # Get type-aware base directory (FIXED: was using config.target_path which always returned StandaloneWindows64)
     mod_type = mf.get("type", "misc")
-    base = get_target_for_type(mod_type, mf.get("name", mod_name))
+    base = get_install_dir_for_type(mod_type, mf.get("name", mod_name))
 
     if not base or not base.exists():
         raise RuntimeError("No valid FM26 target set. Use Detect or Set Target.")
@@ -812,7 +270,7 @@ def disable_mod(mod_name: str, log):
                     log(f"  [error/remove] {tgt_rel} :: Failed to delete")
                     errors += 1
                     continue
-                b = find_latest_backup_for_filename(tgt.name)
+                b = find_latest_backup_for_filename(tgt.name, BACKUP_DIR)
                 if b and b.exists():
                     shutil.copy2(b, tgt)
                     log(f"  [restore] {b.name}  →  {tgt_rel}")
@@ -855,6 +313,9 @@ def install_mod_from_folder(src_folder: Path, name_override: str | None, log=Non
 def build_mod_index(names=None):
     if names is None:
         names = [p.name for p in MODS_DIR.iterdir() if p.is_dir()]
+    elif not names:
+        # Empty list means no mods enabled - return empty index
+        return {}, {}
     manifests = {}
     idx = {}
     for m in names:
@@ -882,7 +343,7 @@ def create_restore_point(base: Path, log):
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     rp = RESTORE_POINTS_DIR / ts
     rp.mkdir(parents=True, exist_ok=True)
-    idx, _ = build_mod_index(get_enabled_mods())
+    idx, _ = build_mod_index(config.enabled_mods)
     for rel in idx.keys():
         src = base / rel
         if src.exists() and src.is_file():
@@ -910,13 +371,13 @@ def rollback_to_restore_point(name: str, base: Path, log):
 # Apply order
 # --------------
 def apply_enabled_mods_in_order(log):
-    base = get_target()
+    base = config.target_path
     if not base or not base.exists():
         raise RuntimeError("No valid FM26 target set. Use Detect or Set Target.")
 
-    enabled = get_enabled_mods()
+    enabled = config.enabled_mods
     enabled_set = set(enabled)
-    previously_applied = get_last_applied_mods()
+    previously_applied = config.last_applied_mods
 
     removed = []
     for name in previously_applied:
@@ -930,14 +391,14 @@ def apply_enabled_mods_in_order(log):
         except Exception as ex:
             log(f"[WARN] Failed disabling {name}: {ex}")
 
-    order = get_load_order()
+    order = config.load_order
     ordered = [m for m in order if m in enabled] + [
         m for m in enabled if m not in order
     ]
     if not ordered:
         if removed:
             log(f"Removed {len(removed)} mod(s) no longer enabled.")
-        set_last_applied_mods([])
+        config.last_applied_mods = []
         log("No enabled mods to apply.")
         return
     rp = create_restore_point(base, log)
@@ -951,12 +412,137 @@ def apply_enabled_mods_in_order(log):
     log(
         f"Applied {len(ordered)} mod(s) in order (last-write-wins). Restore point: {rp}"
     )
-    set_last_applied_mods(ordered)
+    config.last_applied_mods = ordered
 
 
-# ==========
+def delete_mod(mod_name: str, log):
+    """Delete selected mod from computer."""
+    name = self.selected_mod_name()
+    if not name:
+        messagebox.showinfo("Delete", "Select a mod first.")
+        return
+
+    if not messagebox.askyesno(
+            "Delete Mod",
+            f"Are you sure you want to permanently delete '{name}'?\n\nThis will remove the mod folder and all its files from your computer."
+        ):
+            return
+
+    try:
+        mod_dir = MODS_DIR / name
+        if mod_dir.exists():
+            # First disable the mod to remove files from game directories
+            try:
+                disable_mod(name, self._log)
+            except Exception as e:
+                self._log(f"Error disabling mod before deletion: {e}")
+
+            # Remove from enabled mods list
+            enabled = config.enabled_mods
+            if name in enabled:
+                enabled.remove(name)
+                config.enabled_mods = enabled
+
+            # Remove from load order
+            order = config.load_order
+            if name in order:
+                order.remove(name)
+                config.load_order = order
+
+            # Delete mod folder
+            safe_delete_path(mod_dir, allow_symlink_delete=False)
+            self._log(f"Deleted mod '{name}' from {MODS_DIR}")
+            self.refresh_mod_list()
+            messagebox.showinfo("Delete", f"Mod '{name}' has been permanently deleted.")
+        else:
+            messagebox.showerror("Delete Error", f"Mod '{name}' not found in {MODS_DIR}")
+    except Exception as e:
+        messagebox.showerror("Delete Error", f"Failed to delete mod: {e}")
+        self._log(f"Delete error for '{name}': {e}")
+
+
+# --------------------
+# Restore points
+# --------------------
+def create_restore_point(base: Path, log):
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    rp = RESTORE_POINTS_DIR / ts
+    rp.mkdir(parents=True, exist_ok=True)
+    idx, _ = build_mod_index(config.enabled_mods)
+    for rel in idx.keys():
+        src = base / rel
+        if src.exists() and src.is_file():
+            dst = rp / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+    log(f"Restore point created: {rp.name}")
+    return rp.name
+
+
+def rollback_to_restore_point(name: str, base: Path, log):
+    rp = RESTORE_POINTS_DIR / name
+    if not rp.exists():
+        raise FileNotFoundError("Restore point not found.")
+    for p in rp.rglob("*"):
+        if p.is_file():
+            rel = p.relative_to(rp)
+            dst = base / rel.as_posix()
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(p, dst)
+    log(f"Rolled back to restore point: {name}")
+
+
+# --------------
+# Apply order
+# --------------
+def apply_enabled_mods_in_order(log):
+    base = config.target_path
+    if not base or not base.exists():
+        raise RuntimeError("No valid FM26 target set. Use Detect or Set Target.")
+
+    enabled = config.enabled_mods
+    enabled_set = set(enabled)
+    previously_applied = config.last_applied_mods
+
+    removed = []
+    for name in previously_applied:
+        if name in enabled_set:
+            continue
+        try:
+            disable_mod(name, log)
+            removed.append(name)
+        except FileNotFoundError:
+            log(f"[disable/skip] {name} not found on disk; skipping removal.")
+        except Exception as ex:
+            log(f"[WARN] Failed disabling {name}: {ex}")
+
+    order = config.load_order
+    ordered = [m for m in order if m in enabled] + [
+        m for m in enabled if m not in order
+    ]
+    if not ordered:
+        if removed:
+            log(f"Removed {len(removed)} mod(s) no longer enabled.")
+        config.last_applied_mods = []
+        log("No enabled mods to apply.")
+        return
+    rp = create_restore_point(base, log)
+    for name in ordered:
+        try:
+            enable_mod(name, log)
+        except Exception as ex:
+            log(f"[WARN] Failed enabling {name}: {ex}")
+    if removed:
+        log(f"Removed {len(removed)} mod(s) no longer enabled.")
+    log(
+        f"Applied {len(ordered)} mod(s) in order (last-write-wins). Restore point: {rp}"
+    )
+    config.last_applied_mods = ordered
+
+
+# ----------
 #   GUI
-# ==========
+# ----------
 class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
     def __init__(self):
         # Initialize with theme if ttkbootstrap is available
@@ -979,8 +565,8 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
 
         # Initialize enhanced features
         if ENHANCED_FEATURES:
-            self.mod_store_api = ModStoreAPI(get_store_url())
-            webhooks = get_discord_webhooks()
+            self.mod_store_api = ModStoreAPI(config.store_url)
+            webhooks = config.discord_webhooks
             self.discord = DiscordChannels(webhooks['error'], webhooks['mod_submission'])
             fm_dir = find_fm_install_dir()
             self.bepinex_manager = BepInExManager(fm_dir) if fm_dir else None
@@ -1138,7 +724,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         self.create_footer()
 
     def create_my_mods_tab(self):
-        """Create the My Mods tab (original mod manager functionality)."""
+        """Create My Mods tab (original mod manager functionality)."""
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="My Mods")
 
@@ -1198,8 +784,9 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             ttk.Button(right, text="Import Mod…", command=self.on_import_mod, bootstyle="primary").pack(fill=tk.X, pady=2)
             ttk.Button(right, text="Enable (mark)", command=self.on_enable_selected, bootstyle="success-outline").pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Disable (unmark)", command=self.on_disable_selected, bootstyle="secondary-outline").pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Delete", command=self.on_delete_selected, bootstyle="danger").pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Up (Order)", command=self.on_move_up, bootstyle="secondary-outline").pack(fill=tk.X, pady=(12, 2))
-            ttk.Button(right, text="Down (Order)", command=self.on_move_down, bootstyle="secondary-outline").pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Down (Order)", command=self.on_move_down, bootstyle="secondary-outline").pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Apply Order", command=self.on_apply_order, bootstyle="success").pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Conflicts…", command=self.on_conflicts, bootstyle="warning").pack(fill=tk.X, pady=2)
             ttk.Button(right, text="Rollback…", command=self.on_rollback, bootstyle="danger-outline").pack(fill=tk.X, pady=(12, 2))
@@ -1210,8 +797,9 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             ttk.Button(right, text="Import Mod…", command=self.on_import_mod).pack(fill=tk.X, pady=2)
             ttk.Button(right, text="Enable (mark)", command=self.on_enable_selected).pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Disable (unmark)", command=self.on_disable_selected).pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Delete", command=self.on_delete_selected).pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Up (Order)", command=self.on_move_up).pack(fill=tk.X, pady=(12, 2))
-            ttk.Button(right, text="Down (Order)", command=self.on_move_down).pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Down (Order)", command=self.on_move_down).pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Apply Order", command=self.on_apply_order).pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Conflicts…", command=self.on_conflicts).pack(fill=tk.X, pady=2)
             ttk.Button(right, text="Rollback…", command=self.on_rollback).pack(fill=tk.X, pady=(12, 2))
@@ -1270,7 +858,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             ttk.Button(btn_frame, text="Submit Mod", command=self.on_submit_mod).pack(side=tk.LEFT, padx=2)
 
     def create_mod_store_tab(self):
-        """Create the Mod Store browser tab."""
+        """Create Mod Store browser tab."""
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="Mod Store")
 
@@ -1320,7 +908,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         self.refresh_store_mods()
 
     def create_bepinex_tab(self):
-        """Create the BepInEx management tab."""
+        """Create BepInEx management tab."""
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="BepInEx")
 
@@ -1335,7 +923,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         install_frame = ttk.Labelframe(tab, text="Installation")
         install_frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=8)
 
-        ttk.Button(install_frame, text="Install BepInEx", command=self.on_bepinex_install).pack(padx=10, pady=5, fill=tk.X)
+        ttk.Button(install_frame, text="Install BepInEx", command=self.on_bepinex_install, bootstyle="primary" if TTKBOOTSTRAP_AVAILABLE else None).pack(padx=10, pady=5, fill=tk.X)
         ttk.Label(install_frame, text="Installs BepInEx from BepInEx_Patched_Win_af0cba7.rar", font=("", 8)).pack(padx=10, pady=(0, 10))
 
         # Configuration section
@@ -1350,14 +938,14 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             command=self.on_bepinex_toggle_console
         ).pack(padx=10, pady=5, anchor="w")
 
-        ttk.Button(config_frame, text="Open BepInEx Config File", command=self.on_bepinex_open_config).pack(padx=10, pady=5, fill=tk.X)
+        ttk.Button(config_frame, text="Open BepInEx Config File", command=self.on_bepinex_open_config, bootstyle="info-outline" if TTKBOOTSTRAP_AVAILABLE else None).pack(padx=10, pady=5, fill=tk.X)
 
         # Logs section
         logs_frame = ttk.Labelframe(tab, text="Logs & Debugging")
         logs_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=8, pady=8)
 
-        ttk.Button(logs_frame, text="View Latest Log", command=self.on_bepinex_view_log).pack(padx=10, pady=5, fill=tk.X)
-        ttk.Button(logs_frame, text="Open BepInEx Folder", command=self.on_bepinex_open_folder).pack(padx=10, pady=5, fill=tk.X)
+        ttk.Button(logs_frame, text="View Latest Log", command=self.on_bepinex_view_log, bootstyle="info-outline" if TTKBOOTSTRAP_AVAILABLE else None).pack(padx=10, pady=5, fill=tk.X)
+        ttk.Button(logs_frame, text="Open BepInEx Folder", command=self.on_bepinex_open_folder, bootstyle="info-outline" if TTKBOOTSTRAP_AVAILABLE else None).pack(padx=10, pady=5, fill=tk.X)
 
         # Update status
         self.refresh_bepinex_status()
@@ -1372,7 +960,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         safe_open_path(LOGS_DIR)
 
     def refresh_target_display(self):
-        t = get_target()
+        t = config.target_path
         self.target_var.set(str(t) if t else "")
 
     def refresh_mod_list(self):
@@ -1380,8 +968,8 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         for i in self.tree.get_children():
             self.tree.delete(i)
         wanted = self.type_filter.get()
-        order = get_load_order()
-        enabled = set(get_enabled_mods())
+        order = config.load_order
+        enabled = set(config.enabled_mods)
 
         # Check for updates if enhanced features available
         updates = {}
@@ -1429,7 +1017,6 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
                     )
                 except Exception:
                     rows.append(((p.name, "?", "?", "?", "-", "Unknown", ""), None))
-
         # Insert rows with color tags
         for row, _ in rows:
             # Determine tags based on status
@@ -1446,8 +1033,8 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         self._log(f"Loaded {len(rows)} mod(s) (filter: {wanted}).")
         if updates:
             self._log(f"[updates] {len(updates)} mod(s) have updates available in the store.")
-        enabled = get_enabled_mods()
-        conflicts, _ = find_conflicts(enabled if enabled else None)
+        enabled = config.enabled_mods
+        conflicts, _ = find_conflicts(enabled)
         if conflicts:
             self._log(
                 f"[conflict] Detected {len(conflicts)} file conflict(s) among enabled mods; opening conflict manager."
@@ -1461,7 +1048,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         return self.tree.item(sel[0])["values"][0]
 
     def on_detect(self):
-        t = detect_and_set()
+        t = detect_fm_path_and_save()
         if t:
             self._log(f"Detected target: {t}")
         else:
@@ -1487,7 +1074,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
                 f"Selected folder does not contain 'Standalone' in its name.\nUse anyway?\n\n{p}",
             ):
                 return
-        set_target(p)
+        config.target_path = p
         self._log(f"Set target to: {p}")
         self.refresh_target_display()
 
@@ -1534,12 +1121,13 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             else:
                 src_folder = choice
             newname = install_mod_from_folder(src_folder, None, log=self._log)
-            order = get_load_order()
+            order = config.load_order
             if newname not in order:
                 order.append(newname)
-                set_load_order(order)
+                config.load_order = order
             self.refresh_mod_list()
             messagebox.showinfo("Import", f"Imported '{newname}'.")
+
         except Exception as e:
             messagebox.showerror("Import Error", str(e))
         finally:
@@ -1555,10 +1143,10 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         if not name:
             messagebox.showinfo("Mods", "Select a mod first.")
             return
-        enabled = get_enabled_mods()
+        enabled = config.enabled_mods
         if name not in enabled:
             enabled.append(name)
-            set_enabled_mods(enabled)
+            config.enabled_mods = enabled
             self._log(f"Enabled (marked) '{name}'. Use Apply Order to write files.")
             self.refresh_mod_list()
         else:
@@ -1569,8 +1157,8 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         if not name:
             messagebox.showinfo("Mods", "Select a mod first.")
             return
-        enabled = [m for m in get_enabled_mods() if m != name]
-        set_enabled_mods(enabled)
+        enabled = [m for m in config.enabled_mods if m != name]
+        config.enabled_mods = enabled
         self._log(
             f"Disabled (unmarked) '{name}'. Apply Order to rewrite files without it."
         )
@@ -1580,13 +1168,13 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         name = self.selected_mod_name()
         if not name:
             return
-        order = get_load_order()
+        order = config.load_order
         if name not in order:
             order.append(name)
         i = order.index(name)
         if i > 0:
             order[i - 1], order[i] = order[i], order[i - 1]
-            set_load_order(order)
+            config.load_order = order
             self._log(f"Moved up: {name}")
             self.refresh_mod_list()
 
@@ -1594,13 +1182,13 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         name = self.selected_mod_name()
         if not name:
             return
-        order = get_load_order()
+        order = config.load_order
         if name not in order:
             order.append(name)
-        i = order.index(name)
+            i = order.index(name)
         if i < len(order) - 1:
             order[i + 1], order[i] = order[i], order[i + 1]
-            set_load_order(order)
+            config.load_order = order
             self._log(f"Moved down: {name}")
             self.refresh_mod_list()
 
@@ -1615,13 +1203,13 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             messagebox.showerror("Apply Order Error", str(e))
 
     def on_conflicts(self):
-        enabled = get_enabled_mods()
-        conflicts, manifests = find_conflicts(enabled if enabled else None)
+        enabled = config.enabled_mods
+        conflicts, manifests = find_conflicts(enabled)
         if not conflicts:
             messagebox.showinfo("Conflicts", "No file overlaps among enabled mods.")
             return
 
-        order = get_load_order()
+        order = config.load_order
         win = tk.Toplevel(self)
         win.title("Conflict Manager — FM26 Mod Manager")
         win.geometry("760x560")
@@ -1636,7 +1224,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         text.configure(yscrollcommand=sb.set)
 
         text.insert(
-            tk.END, "Detected conflicts where multiple mods write the same file(s):\n\n"
+            tk.END, "Detected conflicts where multiple mods write to same file(s):\n\n"
         )
         for rel, mods in conflicts.items():
             ranks = [(order.index(m) if m in order else -1, m) for m in mods]
@@ -1670,13 +1258,13 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
 
         def apply_disables():
             changed = []
-            enabled_now = get_enabled_mods()
+            enabled_now = config.enabled_mods
             for mod_name, var in mods_to_disable.items():
                 if var.get() and mod_name in enabled_now:
                     enabled_now.remove(mod_name)
                     changed.append(mod_name)
             if changed:
-                set_enabled_mods(enabled_now)
+                config.enabled_mods = enabled_now
                 self._log(f"Disabled mods due to conflicts: {', '.join(changed)}")
                 messagebox.showinfo("Conflicts", f"Disabled: {', '.join(changed)}")
                 self.refresh_mod_list()
@@ -1684,14 +1272,10 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
 
         bframe = ttk.Frame(win)
         bframe.pack(pady=(8, 8))
-        ttk.Button(bframe, text="Disable Selected Mods", command=apply_disables).pack(
-            side=tk.LEFT, padx=6
-        )
+        ttk.Button(bframe, text="Disable Selected Mods", command=apply_disables).pack(side=tk.LEFT, padx=6)
         ttk.Button(bframe, text="Close", command=win.destroy).pack(side=tk.LEFT, padx=6)
 
-        self._log(
-            f"Opened conflict manager with {len(conflicts)} overlapping file path(s)."
-        )
+        self._log(f"Opened conflict manager with {len(conflicts)} overlapping file path(s).")
 
     def on_rollback(self):
         rps = sorted(
@@ -1715,7 +1299,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
                 return
             rp = rps[sel[0]]
             try:
-                base = get_target()
+                base = config.target_path
                 if not base or not base.exists():
                     messagebox.showerror("Rollback Error", "No valid FM26 target set.")
                     return
@@ -1728,7 +1312,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         ttk.Button(win, text="Rollback to selected", command=do_rb).pack(pady=(0, 8))
 
     def on_open_target(self):
-        t = get_target()
+        t = config.target_path
         if not t or not t.exists():
             messagebox.showinfo("Open Target", "No valid target set.")
             return
@@ -1905,7 +1489,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
                     mod.get("author", "?"),
                     mod.get("downloads", "—")
                 ))
-            self._log(f"Found {len(mods)} mods matching '{query}'.")
+            self._log(f"Found {len(mods)} mods matching '{query}'")
         except Exception as e:
             messagebox.showerror("Search Error", str(e))
 
@@ -1958,7 +1542,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             url = mod_data.get("download_url")
             manifest_url = mod_data.get("manifest_url")
             if not url:
-                raise ValueError(f"No download URL available for '{mod_name}'.")
+                raise ValueError(f"No download URL available for '{mod_name}'")
 
             temp_dir = Path(tempfile.mkdtemp(prefix="fm_store_"))
             downloaded = self.mod_store_api.download_mod(url, temp_dir)
@@ -1977,7 +1561,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             else:
                 if not manifest_url:
                     raise ValueError(
-                        f"Store entry for '{mod_name}' requires a manifest_url when the release asset is not a ZIP."
+                        f"Store entry for '{mod_name}' requires a manifest_url when release asset is not a ZIP."
                     )
                 manifest_data = self.mod_store_api.fetch_manifest(manifest_url)
                 package_dir = Path(tempfile.mkdtemp(prefix="fm_package_"))
@@ -1998,7 +1582,6 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
                         if source_rel and Path(source_rel).name.lower() == downloaded.name.lower():
                             matched_entry = entry
                             break
-
                 if not matched_entry or not matched_entry.get("source"):
                     raise ValueError(
                         f"Unable to map downloaded asset '{downloaded.name}' to manifest files for '{mod_name}'."
@@ -2010,17 +1593,28 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
                 src_folder = package_dir
 
             newname = install_mod_from_folder(src_folder, None, log=self._log)
-            order = get_load_order()
+            order = config.load_order
             if newname not in order:
                 order.append(newname)
-                set_load_order(order)
+                config.load_order = order
 
             self.after(0, lambda: self.refresh_mod_list())
             self.after(0, lambda: messagebox.showinfo("Install", f"Successfully installed '{newname}'!"))
             self.after(0, lambda: self._log(f"Successfully installed {newname} from store."))
 
+            # Track download count (async, non-blocking, no tokens needed!)
+            def track_download():
+                try:
+                    # No token needed - tracking API handles it securely
+                    self.mod_store_api.increment_download_count(mod_name)
+                    # Success is silent - tracking is non-critical
+                except Exception:
+                    # Fail silently - download tracking is non-critical
+                    pass
+
+            threading.Thread(target=track_download, daemon=True).start()
+
         except Exception as e:
-            self.after(0, lambda: messagebox.showerror("Install Error", str(e)))
             self.after(0, lambda: self._log(f"Install failed: {e}"))
 
     def on_store_details(self):
@@ -2064,20 +1658,8 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             self.store_details_text.insert(tk.END, text)
 
     def on_store_select_row(self, _event):
-        """Handle store mod selection."""
-        self.on_store_details()
-
-    def refresh_bepinex_status(self):
-        """Update BepInEx installation status."""
-        if not ENHANCED_FEATURES or not self.bepinex_manager:
-            return
-
-        if self.bepinex_manager.is_installed():
-            version = self.bepinex_manager.get_version() or "Unknown"
-            self.bepinex_status_var.set(f"✓ Installed (Version: {version})")
-            self.bepinex_console_var.set(self.bepinex_manager.is_console_enabled())
-        else:
-            self.bepinex_status_var.set("✗ Not Installed")
+            """Handle store mod selection."""
+            self.on_store_details()
 
     def on_bepinex_install(self):
         """Install BepInEx."""
@@ -2142,284 +1724,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         else:
             messagebox.showinfo("BepInEx", "BepInEx folder not found.")
 
-    def on_report_bug(self):
-        """Report a bug via Discord."""
-        if not ENHANCED_FEATURES or not self.discord:
-            return
-
-        # Create dialog for bug report
-        win = tk.Toplevel(self)
-        win.title("Report Bug")
-        win.geometry("500x400")
-
-        ttk.Label(win, text="Describe the issue:").pack(padx=10, pady=(10, 5))
-        desc_text = tk.Text(win, height=10)
-        desc_text.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
-
-        ttk.Label(win, text="Email (optional):").pack(padx=10, pady=(10, 5))
-        email_var = tk.StringVar()
-        ttk.Entry(win, textvariable=email_var).pack(padx=10, pady=5, fill=tk.X)
-
-        def send_report():
-            description = desc_text.get("1.0", tk.END).strip()
-            if not description:
-                messagebox.showwarning("Report", "Please describe the issue.")
-                return
-
-            email = email_var.get().strip() or None
-
-            # Get log files
-            logs = []
-            if RUN_LOG.exists():
-                logs.append(RUN_LOG)
-            if self.bepinex_manager:
-                logs.extend(self.bepinex_manager.get_log_files())
-
-            try:
-                success = self.discord.report_error(description, logs, VERSION, email)
-                if success:
-                    messagebox.showinfo("Report", "Bug report sent successfully!")
-                    win.destroy()
-                else:
-                    messagebox.showerror("Report", "Failed to send report. Check Discord webhook configuration.")
-            except Exception as e:
-                messagebox.showerror("Report Error", str(e))
-
-        ttk.Button(win, text="Send Report", command=send_report).pack(pady=10)
-
-    def on_submit_mod(self):
-        """Submit a mod to the store via Discord."""
-        if not ENHANCED_FEATURES or not self.discord:
-            return
-
-        # Create dialog for mod submission
-        win = tk.Toplevel(self)
-        win.title("Submit Mod to Store")
-        win.geometry("500x450")
-
-        ttk.Label(win, text="GitHub Repository URL:").pack(padx=10, pady=(10, 5))
-        repo_var = tk.StringVar()
-        ttk.Entry(win, textvariable=repo_var).pack(padx=10, pady=5, fill=tk.X)
-
-        ttk.Label(win, text="Mod Name:").pack(padx=10, pady=(10, 5))
-        name_var = tk.StringVar()
-        ttk.Entry(win, textvariable=name_var).pack(padx=10, pady=5, fill=tk.X)
-
-        ttk.Label(win, text="Author:").pack(padx=10, pady=(10, 5))
-        author_var = tk.StringVar()
-        ttk.Entry(win, textvariable=author_var).pack(padx=10, pady=5, fill=tk.X)
-
-        ttk.Label(win, text="Mod Type:").pack(padx=10, pady=(10, 5))
-        type_var = tk.StringVar(value="ui")
-        ttk.Combobox(win, textvariable=type_var, values=["ui", "graphics", "tactics", "database", "misc"], state="readonly").pack(padx=10, pady=5, fill=tk.X)
-
-        ttk.Label(win, text="Description:").pack(padx=10, pady=(10, 5))
-        desc_text = tk.Text(win, height=5)
-        desc_text.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
-
-        ttk.Label(win, text="Contact (optional):").pack(padx=10, pady=(10, 5))
-        contact_var = tk.StringVar()
-        ttk.Entry(win, textvariable=contact_var).pack(padx=10, pady=5, fill=tk.X)
-
-        def send_submission():
-            repo = repo_var.get().strip()
-            name = name_var.get().strip()
-            author = author_var.get().strip()
-            mod_type = type_var.get()
-            description = desc_text.get("1.0", tk.END).strip()
-            contact = contact_var.get().strip() or None
-
-            if not all([repo, name, author, description]):
-                messagebox.showwarning("Submit", "Please fill in all required fields.")
-                return
-
-            try:
-                success = self.discord.submit_mod(repo, name, author, description, mod_type, contact)
-                if success:
-                    messagebox.showinfo("Submit", "Mod submission sent successfully!")
-                    win.destroy()
-                else:
-                    messagebox.showerror("Submit", "Failed to send submission. Check Discord webhook configuration.")
-            except Exception as e:
-                messagebox.showerror("Submit Error", str(e))
-
-        ttk.Button(win, text="Submit Mod", command=send_submission).pack(pady=10)
-
-    def on_generate_template(self):
-        """Generate a mod template."""
-        # Create dialog for template generation
-        win = tk.Toplevel(self)
-        win.title("Generate Mod Template")
-        win.geometry("500x500")
-
-        ttk.Label(win, text="Mod Name:").pack(padx=10, pady=(10, 5))
-        name_var = tk.StringVar()
-        ttk.Entry(win, textvariable=name_var).pack(padx=10, pady=5, fill=tk.X)
-
-        ttk.Label(win, text="Version:").pack(padx=10, pady=(10, 5))
-        version_var = tk.StringVar(value="1.0.0")
-        ttk.Entry(win, textvariable=version_var).pack(padx=10, pady=5, fill=tk.X)
-
-        ttk.Label(win, text="Author:").pack(padx=10, pady=(10, 5))
-        author_var = tk.StringVar()
-        ttk.Entry(win, textvariable=author_var).pack(padx=10, pady=5, fill=tk.X)
-
-        ttk.Label(win, text="Mod Type:").pack(padx=10, pady=(10, 5))
-        type_var = tk.StringVar(value="ui")
-        ttk.Combobox(win, textvariable=type_var, values=["ui", "graphics", "tactics", "database", "misc"], state="readonly").pack(padx=10, pady=5, fill=tk.X)
-
-        ttk.Label(win, text="Description:").pack(padx=10, pady=(10, 5))
-        desc_text = tk.Text(win, height=5)
-        desc_text.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
-
-        ttk.Label(win, text="Homepage (optional):").pack(padx=10, pady=(10, 5))
-        homepage_var = tk.StringVar()
-        ttk.Entry(win, textvariable=homepage_var).pack(padx=10, pady=5, fill=tk.X)
-
-        def generate():
-            name = name_var.get().strip()
-            version = version_var.get().strip()
-            author = author_var.get().strip()
-            mod_type = type_var.get()
-            description = desc_text.get("1.0", tk.END).strip()
-            homepage = homepage_var.get().strip()
-
-            if not all([name, version, author, description]):
-                messagebox.showwarning("Generate", "Please fill in all required fields.")
-                return
-
-            # Ask for save location
-            save_path = filedialog.askdirectory(title="Select folder to save template")
-            if not save_path:
-                return
-
-            try:
-                mod_folder = Path(save_path) / name
-                mod_folder.mkdir(exist_ok=True)
-
-                # Create manifest.json
-                manifest = {
-                    "name": name,
-                    "version": version,
-                    "type": mod_type,
-                    "author": author,
-                    "description": description,
-                    "homepage": homepage if homepage else "",
-                    "files": [
-                        {
-                            "source": "your_mod_file_here.bundle",
-                            "target_subpath": "target_file.bundle",
-                            "platform": "windows"
-                        }
-                    ]
-                }
-
-                manifest_path = mod_folder / "manifest.json"
-                with open(manifest_path, 'w', encoding='utf-8') as f:
-                    json.dump(manifest, f, indent=2)
-
-                # Create README
-                readme_path = mod_folder / "README.md"
-                readme_content = f"""# {name}
-
-{description}
-
-## Installation
-1. Use FM Reloaded Mod Manager to install this mod
-2. Or manually copy files to your FM26 installation
-
-## Version
-{version}
-
-## Author
-{author}
-"""
-                with open(readme_path, 'w', encoding='utf-8') as f:
-                    f.write(readme_content)
-
-                messagebox.showinfo("Success", f"Template created at:\n{mod_folder}\n\nAdd your mod files and update manifest.json!")
-                win.destroy()
-
-            except Exception as e:
-                messagebox.showerror("Error", str(e))
-
-        ttk.Button(win, text="Generate Template", command=generate).pack(pady=10)
-
-    def on_settings(self):
-        """Open settings/preferences dialog."""
-        win = tk.Toplevel(self)
-        win.title("Preferences")
-        win.geometry("650x550")
-
-        # Create scrollable container
-        container = ttk.Frame(win)
-        container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        # Theme selection (if ttkbootstrap available)
-        if TTKBOOTSTRAP_AVAILABLE:
-            theme_frame = ttk.Labelframe(container, text="Appearance", padding=10)
-            theme_frame.pack(fill=tk.X, pady=(0, 10))
-
-            ttk.Label(theme_frame, text="Theme:").pack(side=tk.LEFT, padx=(0, 10))
-            current_theme = load_config().get("theme", "cosmo")
-            theme_var = tk.StringVar(value=current_theme)
-
-            # Available themes: light and dark options
-            themes = ["cosmo", "flatly", "litera", "minty", "pulse", "sandstone", "united", "yeti",
-                     "darkly", "cyborg", "superhero", "solar", "vapor"]
-            theme_combo = ttk.Combobox(theme_frame, textvariable=theme_var, values=themes, state="readonly", width=20)
-            theme_combo.pack(side=tk.LEFT)
-
-            ttk.Label(theme_frame, text="(Restart required)", font=("", 8)).pack(side=tk.LEFT, padx=10)
-
-        # Store URL
-        store_frame = ttk.Labelframe(container, text="Mod Store", padding=10)
-        store_frame.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Label(store_frame, text="Store URL:").pack(anchor="w", pady=(0, 5))
-        store_url_var = tk.StringVar(value=get_store_url())
-        ttk.Entry(store_frame, textvariable=store_url_var, width=70).pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(store_frame, text="URL to mods.json file (usually on GitHub raw)", font=("", 8)).pack(anchor="w")
-
-        # Options
-        options_frame = ttk.Labelframe(container, text="Options", padding=10)
-        options_frame.pack(fill=tk.X, pady=(0, 10))
-
-        auto_check_var = tk.BooleanVar(value=load_config().get("auto_check_updates", True))
-        ttk.Checkbutton(options_frame, text="Automatically check for app updates on startup", variable=auto_check_var).pack(anchor="w")
-
-        def save_settings():
-            # Save theme
-            if TTKBOOTSTRAP_AVAILABLE:
-                cfg = load_config()
-                cfg["theme"] = theme_var.get()
-                save_config(cfg)
-
-            # Save store URL
-            set_store_url(store_url_var.get().strip())
-
-            # Save auto-check setting
-            cfg = load_config()
-            cfg["auto_check_updates"] = auto_check_var.get()
-            save_config(cfg)
-
-            # Update runtime instances
-            if self.mod_store_api:
-                self.mod_store_api.set_store_url(store_url_var.get().strip())
-
-            messagebox.showinfo("Settings", "Settings saved successfully!\n\nRestart the app to apply theme changes.")
-            win.destroy()
-
-        # Buttons
-        btn_frame = ttk.Frame(container)
-        btn_frame.pack(side=tk.BOTTOM, pady=(10, 0))
-        if TTKBOOTSTRAP_AVAILABLE:
-            ttk.Button(btn_frame, text="Save", command=save_settings, bootstyle="success").pack(side=tk.LEFT, padx=5)
-            ttk.Button(btn_frame, text="Cancel", command=win.destroy, bootstyle="secondary").pack(side=tk.LEFT, padx=5)
-        else:
-            ttk.Button(btn_frame, text="Save", command=save_settings).pack(side=tk.LEFT, padx=5)
-            ttk.Button(btn_frame, text="Cancel", command=win.destroy).pack(side=tk.LEFT, padx=5)
-
+    # ---- Enhanced feature handlers ----
     def _auto_check_updates(self):
         """Silently check for updates on startup."""
         def check_async():
@@ -2429,7 +1734,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
 
                 if has_update:
                     self.after(0, lambda: self._show_update_dialog(release_info))
-                # If no update, do nothing (silent check)
+                    # If no update, do nothing (silent check)
 
             except Exception as e:
                 # Silent failure on auto-check
@@ -2469,7 +1774,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         ttk.Label(win, text=f"Current Version: {VERSION}").pack(padx=10, pady=(0, 10))
 
         # Release notes
-        ttk.Label(win, text="Release Notes:", font=("", 10, "bold")).pack(padx=10, pady=(10, 5), anchor="w")
+        ttk.Label(win, text="Release Notes:", font=("", 10, "bold")).pack(padx=10, pady=(5, 0))
         notes_text = tk.Text(win, height=12, wrap="word")
         notes_text.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
         notes_text.insert("1.0", release_info.get('body', 'No release notes available.'))
@@ -2482,32 +1787,15 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
 
         # Buttons
         btn_frame = ttk.Frame(win)
-        btn_frame.pack(side=tk.BOTTOM, pady=10)
+        btn_frame.pack(side=tk.BOTTOM, pady=(10, 0))
         ttk.Button(btn_frame, text="Download Update", command=open_download).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Later", command=win.destroy).pack(side=tk.LEFT, padx=5)
 
-    def on_about(self):
-        """Show about dialog."""
-        about_text = f"""FM Reloaded Mod Manager
-Version {VERSION}
-
-A cross-platform mod manager for Football Manager 2026
-
-Original FM_Reloaded_26 by Justin Levine & FM Match Lab Team
-Enhanced and Forked by GerKo
-
-Features:
-• Mod installation and management
-• Load order control with conflict detection
-• Mod Store browser
-• BepInEx integration
-• Discord integration for bug reports
-
-License: CC BY-SA 4.0 International
-
-GitHub: https://github.com/jo13310/FM_Reloaded
-"""
-        messagebox.showinfo("About FM Reloaded", about_text)
+    # ---- main ----
+    if __name__ == "__main__":
+        # macOS may print "Secure coding is not enabled..." warning for Tk — harmless.
+        app = App()
+        app.mainloop()
 
 
 # ---- main ----
@@ -2515,5 +1803,3 @@ if __name__ == "__main__":
     # macOS may print "Secure coding is not enabled..." warning for Tk — harmless.
     app = App()
     app.mainloop()
-
-

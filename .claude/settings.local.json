@@ -5,7 +5,10 @@
       "Bash(find:*)",
       "Bash(wc:*)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(pyinstaller:*)",
+      "Bash(pip:*)",
+      "Bash(core/__init__.py)"
     ],
     "deny": [],
     "ask": []
