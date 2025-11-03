@@ -673,9 +673,12 @@ def backup_original(target_file: Path, backup_dir: Path) -> Optional[Path]:
     """
     Create a backup of a file before modifying it.
 
+    Stores backup alongside original file with .bck extension for easy restoration.
+    Example: gamemodules_assets_match.bundle -> gamemodules_assets_match.bundle.bck
+
     Args:
         target_file: File to backup
-        backup_dir: Directory to store backups
+        backup_dir: Directory to store backups (legacy, not used anymore)
 
     Returns:
         Path to backup file, or None if file doesn't exist
@@ -683,33 +686,53 @@ def backup_original(target_file: Path, backup_dir: Path) -> Optional[Path]:
     if not Path(target_file).exists():
         return None
 
-    backup_dir.mkdir(parents=True, exist_ok=True)
+    # Store backup in same directory as original file with .bck extension
+    target_file = Path(target_file)
+    backup_file = target_file.parent / f"{target_file.name}.bck"
 
-    # Generate unique backup filename using hash
-    h = hashlib.sha256(str(target_file).encode("utf-8")).hexdigest()[:10]
-    dest = backup_dir / f"{Path(target_file).name}.{h}.bak"
+    # Only create backup if it doesn't already exist (preserve original game file)
+    if not backup_file.exists():
+        try:
+            shutil.copy2(target_file, backup_file)
+            return backup_file
+        except Exception:
+            # Fallback: try legacy backup method in backup_dir
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            h = hashlib.sha256(str(target_file).encode("utf-8")).hexdigest()[:10]
+            dest = backup_dir / f"{target_file.name}.{h}.bak"
+            i, final = 1, dest
+            while final.exists():
+                final = backup_dir / f"{dest.name}.{i}"
+                i += 1
+            shutil.copy2(target_file, final)
+            return final
 
-    # Add sequence number if backup already exists
-    i, final = 1, dest
-    while final.exists():
-        final = backup_dir / f"{dest.name}.{i}"
-        i += 1
-
-    shutil.copy2(target_file, final)
-    return final
+    return backup_file
 
 
-def find_latest_backup_for_filename(filename: str, backup_dir: Path) -> Optional[Path]:
+def find_latest_backup_for_filename(filename: str, backup_dir: Path, target_file: Optional[Path] = None) -> Optional[Path]:
     """
     Find the most recent backup file for a given filename.
 
+    First tries to find .bck backup in same directory as target file.
+    Falls back to legacy backup directory if not found.
+
     Args:
         filename: Original filename (without .bak extension)
-        backup_dir: Directory containing backups
+        backup_dir: Directory containing legacy backups
+        target_file: Full path to target file (to check for .bck in same directory)
 
     Returns:
         Path to latest backup, or None if no backups found
     """
+    # First, try to find .bck backup alongside the original file
+    if target_file:
+        target_file = Path(target_file)
+        inline_backup = target_file.parent / f"{target_file.name}.bck"
+        if inline_backup.exists():
+            return inline_backup
+
+    # Fallback: search legacy backup directory
     if not backup_dir.exists():
         return None
 

@@ -9,7 +9,8 @@
       "Bash(pyinstaller:*)",
       "Bash(pip:*)",
       "Bash(core/__init__.py)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "WebFetch(domain:api.github.com)"
     ],
     "deny": [],
     "ask": []

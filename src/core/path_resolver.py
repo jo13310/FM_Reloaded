@@ -157,6 +157,7 @@ def resolve_target(base: Path, sub: str, config_target: Optional[Path] = None) -
     Routing rules:
     - BepInEx/ → FM root/BepInEx/
     - data/ → FM root/data/
+    - shared/ → FM root/shared/
     - graphics/ → Documents/FM26/graphics/
     - tactics/ → Documents/FM26/tactics/
     - editor data/ → Documents/FM26/editor data/
@@ -204,6 +205,16 @@ def resolve_target(base: Path, sub: str, config_target: Optional[Path] = None) -
 
         target = root / Path(*normalized.split("/"))
         return validate_path_safety(target, root, "data path")
+
+    # shared/ paths go to FM root (for database/licensing files)
+    if normalized.startswith("shared/") or normalized.startswith("shared\\"):
+        if config_target and config_target.exists():
+            root = _game_root_from_target(config_target)
+        else:
+            root = _game_root_from_target(base)
+
+        target = root / Path(*normalized.split("/"))
+        return validate_path_safety(target, root, "shared path")
 
     # Documents-relative paths
     user_dir = fm_user_dir()

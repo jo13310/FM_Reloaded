@@ -244,6 +244,7 @@ def confirm_file_deletions(deletions: list, mod_name: str) -> bool:
 
 def enable_mod(mod_name: str, log):
     from core.security_utils import can_delete_game_file
+    from core.path_resolver import _game_root_from_target
 
     mod_dir = MODS_DIR / mod_name
     if not mod_dir.exists():
@@ -252,7 +253,7 @@ def enable_mod(mod_name: str, log):
 
     # Get type-aware base directory
     mod_type = mf.get("type", "misc")
-    base = get_install_dir_for_type(mod_type, mf.get("name", mod_name))
+    base = get_install_dir_for_type(mod_type, mf.get("name", mod_name), config.target_path)
 
     if not base or not base.exists():
         raise RuntimeError("No valid FM26 target set. Use Detect or Set Target.")
@@ -295,10 +296,15 @@ def enable_mod(mod_name: str, log):
             errors += 1
             continue
 
-        tgt = resolve_target(base, tgt_rel)
+        tgt = resolve_target(base, tgt_rel, config.target_path)
 
         # SECURITY: Validate file can be deleted
-        allowed, reason = can_delete_game_file(tgt, base)
+        # Use game root for validation if target is in game directory (shared/, data/, BepInEx/)
+        if config.target_path and config.target_path.exists():
+            game_root = _game_root_from_target(config.target_path)
+        else:
+            game_root = base
+        allowed, reason = can_delete_game_file(tgt, game_root)
         if not allowed:
             log(f"  [error/security] Cannot delete {tgt_rel}: {reason}")
             errors += 1
@@ -343,7 +349,7 @@ def enable_mod(mod_name: str, log):
             continue
 
         src = mod_dir / src_rel
-        tgt = resolve_target(base, tgt_rel)
+        tgt = resolve_target(base, tgt_rel, config.target_path)
 
         if not src.exists():
             log(f"  [error/missing] Source not found: {src}")
@@ -376,7 +382,7 @@ def disable_mod(mod_name: str, log):
 
     # Get type-aware base directory
     mod_type = mf.get("type", "misc")
-    base = get_install_dir_for_type(mod_type, mf.get("name", mod_name))
+    base = get_install_dir_for_type(mod_type, mf.get("name", mod_name), config.target_path)
 
     if not base or not base.exists():
         raise RuntimeError("No valid FM26 target set. Use Detect or Set Target.")
@@ -395,7 +401,7 @@ def disable_mod(mod_name: str, log):
             errors += 1
             continue
 
-        tgt = resolve_target(base, tgt_rel)
+        tgt = resolve_target(base, tgt_rel, config.target_path)
         operation = e.get("operation", "copy").lower()
 
         # Handle different operation types
@@ -403,7 +409,7 @@ def disable_mod(mod_name: str, log):
             # Mod DELETED this file - need to RESTORE it from backup
             if not tgt.exists():
                 # File was deleted by mod, try to restore it
-                b = find_latest_backup_for_filename(tgt.name, BACKUP_DIR)
+                b = find_latest_backup_for_filename(tgt.name, BACKUP_DIR, target_file=tgt)
                 if b and b.exists():
                     try:
                         tgt.parent.mkdir(parents=True, exist_ok=True)
@@ -435,7 +441,7 @@ def disable_mod(mod_name: str, log):
                         continue
 
                     # Try to restore backup of original file
-                    b = find_latest_backup_for_filename(tgt.name, BACKUP_DIR)
+                    b = find_latest_backup_for_filename(tgt.name, BACKUP_DIR, target_file=tgt)
                     if b and b.exists():
                         shutil.copy2(b, tgt)
                         log(f"  [restore] {b.name}  →  {tgt_rel}")
@@ -453,6 +459,58 @@ def disable_mod(mod_name: str, log):
     log(
         f"[disable/done] removed={removed} restored={restored} no_backup={missing_backup} absent={not_present} errors={errors}"
     )
+
+
+def cleanup_mod_backups(mod_name: str, log):
+    """
+    Clean up .bck backup files created by this mod.
+    Should only be called AFTER the mod has been successfully disabled.
+
+    Args:
+        mod_name: Name of the mod to clean up backups for
+        log: Logging function
+    """
+    mod_dir = MODS_DIR / mod_name
+    if not mod_dir.exists():
+        return
+
+    try:
+        mf = read_manifest(mod_dir)
+    except Exception:
+        return
+
+    # Get type-aware base directory
+    mod_type = mf.get("type", "misc")
+    base = get_install_dir_for_type(mod_type, mf.get("name", mod_name), config.target_path)
+
+    if not base or not base.exists():
+        return
+
+    files = mf.get("files", [])
+    if not files:
+        return
+
+    log(f"[cleanup] Removing .bck backups for '{mod_name}'...")
+    cleaned = 0
+
+    for e in files:
+        tgt_rel = e.get("target_subpath")
+        if not tgt_rel:
+            continue
+
+        try:
+            tgt = resolve_target(base, tgt_rel, config.target_path)
+            backup_file = tgt.parent / f"{tgt.name}.bck"
+
+            if backup_file.exists():
+                backup_file.unlink()
+                log(f"  [cleanup] Removed {backup_file.name}")
+                cleaned += 1
+        except Exception as ex:
+            log(f"  [error/cleanup] {tgt_rel} :: {ex}")
+
+    if cleaned > 0:
+        log(f"[cleanup/done] Removed {cleaned} .bck backup(s)")
 
 
 def install_mod_from_folder(src_folder: Path, name_override: str | None, log=None):
@@ -841,20 +899,18 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             ttk.Button(right, text="Delete", command=self.on_delete_selected, bootstyle="danger").pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Up (Order)", command=self.on_move_up, bootstyle="secondary-outline").pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Down (Order)", command=self.on_move_down, bootstyle="secondary-outline").pack(fill=tk.X, pady=(12, 2))
-            ttk.Button(right, text="Apply Order", command=self.on_apply_order, bootstyle="success").pack(fill=tk.X, pady=(12, 2))
-            ttk.Button(right, text="Conflicts…", command=self.on_conflicts, bootstyle="warning").pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Conflicts…", command=self.on_conflicts, bootstyle="warning").pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Rollback…", command=self.on_rollback, bootstyle="danger-outline").pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Open Mods Folder", command=self.on_open_mods, bootstyle="info-outline").pack(fill=tk.X, pady=2)
             ttk.Button(right, text="Help (Manifest)", command=self.on_show_manifest_help, bootstyle="secondary-outline").pack(fill=tk.X, pady=(12, 2))
         else:
             ttk.Button(right, text="Refresh", command=self.refresh_mod_list).pack(fill=tk.X, pady=2)
             ttk.Button(right, text="Import Mod…", command=self.on_import_mod).pack(fill=tk.X, pady=2)
-            ttk.Button(right, text="Enable (mark)", command=self.on_enable_selected).pack(fill=tk.X, pady=(12, 2))
-            ttk.Button(right, text="Disable (unmark)", command=self.on_disable_selected).pack(fill=tk.X, pady=2)
+            ttk.Button(right, text="Enable", command=self.on_enable_selected).pack(fill=tk.X, pady=(12, 2))
+            ttk.Button(right, text="Disable", command=self.on_disable_selected).pack(fill=tk.X, pady=2)
             ttk.Button(right, text="Delete", command=self.on_delete_selected).pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Up (Order)", command=self.on_move_up).pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Down (Order)", command=self.on_move_down).pack(fill=tk.X, pady=(12, 2))
-            ttk.Button(right, text="Apply Order", command=self.on_apply_order).pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Conflicts…", command=self.on_conflicts).pack(fill=tk.X, pady=2)
             ttk.Button(right, text="Rollback…", command=self.on_rollback).pack(fill=tk.X, pady=(12, 2))
             ttk.Button(right, text="Open Mods Folder", command=self.on_open_mods).pack(fill=tk.X, pady=2)
@@ -1198,25 +1254,47 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             messagebox.showinfo("Mods", "Select a mod first.")
             return
         enabled = config.enabled_mods
-        if name not in enabled:
-            enabled.append(name)
-            config.enabled_mods = enabled
-            self._log(f"Enabled (marked) '{name}'. Use Apply Order to write files.")
+        if name in enabled:
+            messagebox.showinfo("Mods", f"'{name}' is already enabled.")
+            return
+
+        # Add to enabled list
+        enabled.append(name)
+        config.enabled_mods = enabled
+
+        # Apply the mod immediately
+        self._log(f"Enabling '{name}'...")
+        try:
+            enable_mod(name, self._log)
+            self._log(f"Successfully enabled '{name}'.")
             self.refresh_mod_list()
-        else:
-            messagebox.showinfo("Mods", f"'{name}' already enabled (marked).")
+        except Exception as e:
+            # Rollback: remove from enabled list
+            config.enabled_mods = [m for m in config.enabled_mods if m != name]
+            self._log(f"Failed to enable '{name}': {e}")
+            messagebox.showerror("Enable Failed", f"Failed to enable '{name}':\n\n{e}")
 
     def on_disable_selected(self):
         name = self.selected_mod_name()
         if not name:
             messagebox.showinfo("Mods", "Select a mod first.")
             return
-        enabled = [m for m in config.enabled_mods if m != name]
-        config.enabled_mods = enabled
-        self._log(
-            f"Disabled (unmarked) '{name}'. Apply Order to rewrite files without it."
-        )
-        self.refresh_mod_list()
+
+        if name not in config.enabled_mods:
+            messagebox.showinfo("Mods", f"'{name}' is not enabled.")
+            return
+
+        # Disable the mod immediately
+        self._log(f"Disabling '{name}'...")
+        try:
+            disable_mod(name, self._log)
+            # Remove from enabled list only after successful disable
+            config.enabled_mods = [m for m in config.enabled_mods if m != name]
+            self._log(f"Successfully disabled '{name}'.")
+            self.refresh_mod_list()
+        except Exception as e:
+            self._log(f"Failed to disable '{name}': {e}")
+            messagebox.showerror("Disable Failed", f"Failed to disable '{name}':\n\n{e}")
 
     def on_delete_selected(self):
         """Delete selected mod from computer."""
@@ -1261,11 +1339,39 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
                 self._log(f"[SECURITY] Blocked deletion - path escape attempt: {mod_dir}")
                 return
             if mod_dir.exists():
-                # First disable the mod to remove files from game directories
+                # Always try to disable the mod to ensure files are removed from game directories
+                # This handles cases where the mod was manually installed or the enabled state is incorrect
+                disable_successful = False
+                should_cleanup_backups = False
+
                 try:
+                    if name in config.enabled_mods:
+                        self._log(f"Auto-disabling '{name}' before deletion...")
+                    else:
+                        self._log(f"Cleaning up any installed files for '{name}'...")
+
                     disable_mod(name, self._log)
+                    self._log(f"Successfully cleaned up files for '{name}'.")
+                    disable_successful = True
+                    should_cleanup_backups = True
                 except Exception as e:
-                    self._log(f"Error disabling mod before deletion: {e}")
+                    self._log(f"Error during cleanup: {e}")
+                    if name in config.enabled_mods:
+                        # Only prompt if mod was supposedly enabled
+                        if not messagebox.askyesno(
+                            "Cleanup Failed",
+                            f"Failed to clean up '{name}' files before deletion:\n\n{e}\n\nContinue with deletion anyway?"
+                        ):
+                            return
+                    # User chose to continue or mod wasn't enabled - DON'T cleanup backups if there were errors
+                    should_cleanup_backups = disable_successful
+
+                # Clean up .bck backups only if safe to do so
+                if should_cleanup_backups:
+                    try:
+                        cleanup_mod_backups(name, self._log)
+                    except Exception as e:
+                        self._log(f"Warning: Failed to clean up backups: {e}")
 
                 # Remove from enabled mods list
                 enabled = config.enabled_mods
