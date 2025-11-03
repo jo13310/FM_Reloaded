@@ -31,7 +31,7 @@ The easiest way to start is using the built-in template generator:
    - **Mod Name**: Display name for your mod
    - **Version**: Start with "1.0.0" (use semantic versioning)
    - **Author**: Your name or handle
-   - **Mod Type**: Select from ui, graphics, tactics, database, or misc
+   - **Mod Type**: Select from ui, bundle, camera, skins, graphics, tactics, database, ruleset, editor-data, audio, or misc
    - **Description**: Brief summary of what your mod does
    - **Homepage**: (Optional) Your GitHub repo or website
 4. Choose a save location
@@ -122,7 +122,7 @@ The `manifest.json` file is the core of every mod. It tells FM Reloaded how to i
 |-------|------|-------------|
 | `name` | string | Display name of your mod (shown in mod list) |
 | `version` | string | Semantic version (e.g., "1.0.0", "2.1.3") |
-| `type` | string | Mod category: `ui`, `graphics`, `tactics`, `database`, `misc` |
+| `type` | string | Mod category: `ui`, `bundle`, `camera`, `skins`, `graphics`, `tactics`, `database`, `ruleset`, `editor-data`, `audio`, `misc` |
 | `author` | string | Your name, handle, or team name |
 | `files` | array | List of file installation instructions |
 
@@ -201,15 +201,129 @@ Disabling a mod removes the installed files but keeps the copy in the workspace 
 
 ---
 
+## File Operations
+
+FM Reloaded supports two types of file operations in your mod manifest: **copy** (default) and **delete**.
+
+### Copy Operations (Default)
+
+By default, all entries in the `files` array perform a **copy** operation. The mod manager copies files from your mod's `source` to the game's `target_subpath`. You can explicitly specify this with:
+
+```json
+{
+  "source": "my-file.ltc",
+  "target_subpath": "data/database/db/1800/my-file.ltc",
+  "operation": "copy"
+}
+```
+
+### Delete Operations
+
+Some mods need to **delete** existing game files to work correctly. A common example is **real names fixes** that replace default license files.
+
+To delete a file, set `"operation": "delete"` in your manifest entry:
+
+```json
+{
+  "target_subpath": "data/database/db/1800/original-file.ltc",
+  "operation": "delete"
+}
+```
+
+**Important Notes:**
+- You do NOT need to specify `source` for delete operations (it will be ignored)
+- Delete operations execute BEFORE copy operations during installation
+- Deleted files are automatically backed up and can be restored by uninstalling the mod
+- Users will see a confirmation dialog listing all files to be deleted before installation proceeds
+
+#### Security Restrictions
+
+For safety, FM Reloaded only allows deletion of specific game file types. **Allowed patterns:**
+
+- `*.ltc` - License files (real names fixes)
+- `*.dbc` - Database files
+- `*.fmf` - Tactic files
+- `*.rtf` - Graphics config files
+- `*.edt` - Editor data template files (real names fixes)
+- `editor_data_*.bundle` - Editor data bundles
+- `*.lnc` - Language files
+
+**Protected files that CANNOT be deleted:**
+- Game executables (`fm26.exe`, `fm.exe`, etc.)
+- Core libraries (`*.dll`, `*.dylib`, `*.so`)
+- Unity engine files (`*.pak`, `UnityPlayer.dll`, etc.)
+- Steam integration files
+- System directories
+
+If your mod attempts to delete a file that doesn't match the allowed patterns, the operation will be blocked and logged.
+
+#### Real Names Fix Example
+
+A typical real names fix mod deletes original license files and replaces them with updated versions:
+
+```json
+{
+  "name": "Real Names Fix - Premier League 2025",
+  "version": "1.0.0",
+  "author": "YourName",
+  "description": "Restores real club and player names for Premier League",
+  "type": "data",
+  "files": [
+    {
+      "target_subpath": "data/database/db/1800/english.ltc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "data/database/db/1800/england.ltc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "source": "real-names/english.ltc",
+      "target_subpath": "data/database/db/1800/english.ltc",
+      "operation": "copy"
+    },
+    {
+      "source": "real-names/england.ltc",
+      "target_subpath": "data/database/db/1800/england.ltc",
+      "operation": "copy"
+    }
+  ]
+}
+```
+
+In this example:
+1. The old `english.ltc` and `england.ltc` files are deleted (with automatic backup)
+2. New real names versions are copied to replace them
+3. Users see a confirmation dialog: "⚠️ Warning: This mod will DELETE 2 files..."
+4. Uninstalling the mod restores the original files from backup
+
+#### Backup Field
+
+The `backup` field (default: `true`) controls whether deleted files are backed up:
+
+```json
+{
+  "target_subpath": "data/database/db/1800/temp-file.ltc",
+  "operation": "delete",
+  "backup": false
+}
+```
+
+**Recommendation:** Always use `backup: true` (or omit the field) unless you're certain the file can be safely deleted without restoration capability.
+
+---
+
 ## Mod Types
 
 FM Reloaded supports different mod types, each with specific installation behavior:
 
-### UI / Bundle Mods (`"type": "ui"`)
+### UI / Bundle Mods (`"type": "ui"` or `"bundle"`)
 
 - **Install Location**: Game data folder (StandaloneWindows64 / StandaloneOSX)
-- **Common Files**: `.bundle` files
-- **Examples**: Interface tweaks, custom panels, skin modifications
+- **Common Files**: `.bundle` files and other match presentation assets
+- **Examples**: Interface tweaks, presentation packs, bundle replacements
 
 ```json
 {
@@ -223,6 +337,38 @@ FM Reloaded supports different mod types, each with specific installation behavi
   ]
 }
 ```
+
+### Camera Mods (`"type": "camera")
+
+- **Install Location**: Game root directory (where BepInEx lives)
+- **Target Path Routing**: Use `BepInEx/plugins/` in manifest `target_subpath`
+- **Common Files**: `.dll` (BepInEx plug-ins)
+- **Use for**: Camera tweaks, gameplay presentation mods
+
+Camera mods are BepInEx plugins that modify the 3D match engine camera. They must be installed to the game root directory where BepInEx is located.
+
+**Important:** Always specify the full BepInEx path in your manifest:
+
+```json
+{
+  "type": "camera",
+  "files": [
+    {
+      "source": "MyCamera.dll",
+      "target_subpath": "BepInEx/plugins/MyCamera.dll"
+    }
+  ]
+}
+```
+
+The `"type": "camera"` ensures proper routing to the game root, while the `BepInEx/plugins/` prefix in `target_subpath` tells FM Reloaded to place the plugin in the correct subdirectory.
+
+
+### Skins Mods (`"type": "skins"`)
+
+- **Install Location**: `Documents/Sports Interactive/Football Manager 26/skins/`
+- **Common Files**: Skin folders containing layout XML, graphics, and config files
+- **Tip**: Ship the entire skin directory; FM Reloaded copies it intact
 
 ### Graphics Mods (`"type": "graphics"`)
 
@@ -245,6 +391,12 @@ FM Reloaded supports different mod types, each with specific installation behavi
 }
 ```
 
+### Audio Mods (`"type": "audio"`)
+
+- **Install Location**: Game data folder (usually under `data/audio/`)
+- **Common Files**: `.wav`, `.fsb`, `.bank`
+- **Use for**: Match sound packs, ambience overhauls
+
 ### Tactics Mods (`"type": "tactics"`)
 
 - **Install Location**: `Documents/Sports Interactive/Football Manager 26/tactics/`
@@ -264,13 +416,26 @@ FM Reloaded supports different mod types, each with specific installation behavi
 
 ### Database Mods (`"type": "database"`)
 
-- **Install Location**: Game data folder
-- **Common Files**: `.db`, `.dbc`
+- **Install Location**: Game data folder (e.g., `shared/data/database/db/2600/`)
+- **Common Files**: `.db`, `.dbc`, `.lnc`
+- **Tip**: Use the manifest `cleanup` block to remove conflicting stock data
+
+### Ruleset Mods (`"type": "ruleset"`)
+
+- **Install Location**: `Documents/Sports Interactive/Football Manager 26/editor data/`
+- **Common Files**: `.fmf`
+- **Use for**: Competition rule changes, league restructures
+
+### Editor Data Mods (`"type": "editor-data"`)
+
+- **Install Location**: `Documents/Sports Interactive/Football Manager 26/editor data/`
+- **Common Files**: `.fmf`, supplemental editor exports
+- **Note**: Use when bundling non-ruleset editor adjustments
 
 ### Misc Mods (`"type": "misc"`)
 
-- **Install Location**: User data folder
-- **Use for**: Editor files, custom tools, utilities
+- **Install Location**: User data folder (varies by manifest)
+- **Use for**: Utilities, custom scripts, supplementary assets
 
 ---
 

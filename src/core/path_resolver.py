@@ -270,6 +270,18 @@ def get_install_dir_for_type(mod_type: str, mod_name: str, config_target: Option
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    # Camera mods (BepInEx plugins)
+    # Note: Camera mods should use BepInEx/plugins/ in manifest target_subpath
+    # This routing provides a sensible base directory fallback
+    if mod_type == "camera":
+        if config_target:
+            # Return game root (parent of StandaloneWindows64)
+            game_root = config_target.parent.parent
+            return game_root
+        # Fallback to Documents if no target configured
+        base.mkdir(parents=True, exist_ok=True)
+        return base
+
     # Default fallback (misc mods)
     base.mkdir(parents=True, exist_ok=True)
     return base

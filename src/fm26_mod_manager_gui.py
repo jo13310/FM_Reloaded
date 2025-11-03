@@ -37,7 +37,8 @@ from core.path_resolver import (
 )
 from core.security_utils import (
     safe_extract_zip, safe_delete_path, safe_copy, _copy_any,
-    backup_original, find_latest_backup_for_filename
+    backup_original, find_latest_backup_for_filename,
+    register_safe_deletion_root, set_security_log_path
 )
 
 # Import new modules
@@ -95,6 +96,12 @@ MODS_DIR = BASE_DIR / "mods"
 LOGS_DIR = BASE_DIR / "logs"
 RESTORE_POINTS_DIR = BASE_DIR / "restore_points"
 
+
+def load_config() -> dict:
+    """Convenience wrapper to refresh and return the latest config values."""
+    return config.load()
+
+
 RUN_LOG = LOGS_DIR / f"run_{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
 LAST_LINK = LOGS_DIR / "last_run.log"
 
@@ -117,6 +124,25 @@ def safe_open_path(path: Path):
 def _init_storage():
     for p in (BACKUP_DIR, MODS_DIR, LOGS_DIR, RESTORE_POINTS_DIR):
         p.mkdir(parents=True, exist_ok=True)
+
+    # SECURITY: Register safe deletion roots
+    # These directories are whitelisted for deletion operations
+    try:
+        register_safe_deletion_root(MODS_DIR)
+        register_safe_deletion_root(BACKUP_DIR)
+        register_safe_deletion_root(RESTORE_POINTS_DIR)
+        # Note: LOGS_DIR is deliberately NOT registered to prevent accidental log deletion
+    except Exception as e:
+        # If registration fails, log it but don't crash
+        print(f"Warning: Failed to register safe deletion roots: {e}")
+
+    # SECURITY: Set up security audit logging
+    try:
+        security_log = LOGS_DIR / "security_audit.log"
+        set_security_log_path(security_log)
+    except Exception as e:
+        print(f"Warning: Failed to set security log path: {e}")
+
     # write "pointer" to last run log (symlink if allowed, else text)
     try:
         if LAST_LINK.exists() or LAST_LINK.is_symlink():
@@ -182,13 +208,49 @@ def detect_fm_path_and_save():
 # -------------
 # Mod actions
 # -------------
+def confirm_file_deletions(deletions: list, mod_name: str) -> bool:
+    """
+    Show popup warning user about file deletions before installation.
+
+    Args:
+        deletions: List of file entries with operation="delete"
+        mod_name: Name of the mod being installed
+
+    Returns:
+        True if user confirms, False if user cancels
+    """
+    from tkinter import messagebox
+
+    if not deletions:
+        return True  # No deletions, no confirmation needed
+
+    # Build list of files to be deleted
+    deletion_list = "\n".join([f"  • {d.get('target_subpath', '?')}" for d in deletions])
+
+    message = (
+        f"⚠️ Warning: '{mod_name}' will DELETE these files:\n\n"
+        f"{deletion_list}\n\n"
+        f"Backups will be created automatically.\n"
+        f"You can restore these files by uninstalling the mod.\n\n"
+        f"Do you want to continue?"
+    )
+
+    return messagebox.askyesno(
+        "Confirm File Deletion",
+        message,
+        icon="warning"
+    )
+
+
 def enable_mod(mod_name: str, log):
+    from core.security_utils import can_delete_game_file
+
     mod_dir = MODS_DIR / mod_name
     if not mod_dir.exists():
         raise FileNotFoundError(f"Mod not found: {mod_name} in {MODS_DIR}")
     mf = read_manifest(mod_dir)
 
-    # Get type-aware base directory (FIXED: was using config.target_path which always returned StandaloneWindows64)
+    # Get type-aware base directory
     mod_type = mf.get("type", "misc")
     base = get_install_dir_for_type(mod_type, mf.get("name", mod_name))
 
@@ -197,34 +259,103 @@ def enable_mod(mod_name: str, log):
     files = mf.get("files", [])
     if not files:
         raise ValueError("Manifest has no 'files' entries.")
+
     plat = _platform_tag()
     log(f"[enable] {mf.get('name', mod_name)} (type={mod_type})  →  {base}")
     log(f"  [context] platform={plat} files={len(files)}")
-    wrote = skipped = backed_up = errors = 0
+
+    # PHASE 0: Separate operations by type (delete vs copy)
+    deletions = []
+    copies = []
     for e in files:
+        operation = e.get("operation", "copy").lower()
+        ep = e.get("platform")
+
+        # Skip platform-incompatible entries
+        if ep and ep != plat:
+            continue
+
+        if operation == "delete":
+            deletions.append(e)
+        else:  # "copy" or anything else defaults to copy
+            copies.append(e)
+
+    # PHASE 0.5: Show user confirmation if there are deletions
+    if deletions:
+        if not confirm_file_deletions(deletions, mf.get("name", mod_name)):
+            log(f"[enable/cancelled] User cancelled installation due to file deletions")
+            return
+
+    # PHASE 1: Process deletion operations first
+    deleted = backed_up_del = errors = 0
+    for e in deletions:
+        tgt_rel = e.get("target_subpath")
+        if not tgt_rel:
+            log(f"  [error/delete] Missing 'target_subpath' in delete entry")
+            errors += 1
+            continue
+
+        tgt = resolve_target(base, tgt_rel)
+
+        # SECURITY: Validate file can be deleted
+        allowed, reason = can_delete_game_file(tgt, base)
+        if not allowed:
+            log(f"  [error/security] Cannot delete {tgt_rel}: {reason}")
+            errors += 1
+            continue
+
+        if not tgt.exists():
+            log(f"  [skip/delete] File doesn't exist: {tgt_rel}")
+            continue
+
+        try:
+            # Backup before deletion (unless explicitly disabled)
+            if e.get("backup", True):
+                b = backup_original(tgt, BACKUP_DIR)
+                if b:
+                    log(f"  [backup] {tgt_rel}  ←  {b.name}")
+                    backed_up_del += 1
+
+            # Delete the file
+            safe_delete_path(tgt, allow_symlink_delete=False)
+            log(f"  [delete] {tgt_rel}")
+            deleted += 1
+
+        except Exception as ex:
+            log(f"  [error/delete] {tgt_rel} :: {ex}")
+            errors += 1
+
+    # PHASE 2: Process copy operations (original logic)
+    wrote = skipped = backed_up_copy = 0
+    for e in copies:
         ep = e.get("platform")
         src_rel = e.get("source")
         tgt_rel = e.get("target_subpath")
+
         if ep and ep != plat:
             log(f"  [skip/platform] {src_rel} (entry platform={ep})")
             skipped += 1
             continue
+
         if not src_rel or not tgt_rel:
             log(f"  [error/entry] Missing 'source' or 'target_subpath' in {e}")
             errors += 1
             continue
+
         src = mod_dir / src_rel
         tgt = resolve_target(base, tgt_rel)
+
         if not src.exists():
             log(f"  [error/missing] Source not found: {src}")
             errors += 1
             continue
+
         try:
             tgt.parent.mkdir(parents=True, exist_ok=True)
             if tgt.exists():
                 b = backup_original(tgt, BACKUP_DIR)
                 log(f"  [backup] {tgt_rel}  ←  {b.name if b else 'skipped'}")
-                backed_up += 1
+                backed_up_copy += 1
             # Use _copy_any() instead of shutil.copy2() to support directories
             _copy_any(src, tgt)
             log(f"  [write] {src_rel}  →  {tgt_rel}")
@@ -232,8 +363,10 @@ def enable_mod(mod_name: str, log):
         except Exception as ex:
             log(f"  [error/copy] {src_rel} → {tgt_rel} :: {ex}")
             errors += 1
+
+    total_backed_up = backed_up_del + backed_up_copy
     log(
-        f"[enable/done] wrote={wrote} backup={backed_up} skipped={skipped} errors={errors}"
+        f"[enable/done] deleted={deleted} wrote={wrote} backup={total_backed_up} skipped={skipped} errors={errors}"
     )
 
 
@@ -241,7 +374,7 @@ def disable_mod(mod_name: str, log):
     mod_dir = MODS_DIR / mod_name
     mf = read_manifest(mod_dir)
 
-    # Get type-aware base directory (FIXED: was using config.target_path which always returned StandaloneWindows64)
+    # Get type-aware base directory
     mod_type = mf.get("type", "misc")
     base = get_install_dir_for_type(mod_type, mf.get("name", mod_name))
 
@@ -251,39 +384,72 @@ def disable_mod(mod_name: str, log):
     if not files:
         log("[disable] Manifest has no files to disable.")
         return
+
     log(f"[disable] {mf.get('name', mod_name)} (type={mod_type})  from  {base}")
     removed = restored = missing_backup = not_present = errors = 0
+
     for e in files:
         tgt_rel = e.get("target_subpath")
         if not tgt_rel:
             log(f"  [error/entry] Missing 'target_subpath' in {e}")
             errors += 1
             continue
+
         tgt = resolve_target(base, tgt_rel)
-        if tgt.exists():
-            try:
-                # Use safe deletion with symlink protection
-                if safe_delete_path(tgt, allow_symlink_delete=False):
-                    log(f"  [remove] {tgt_rel}")
-                    removed += 1
-                else:
-                    log(f"  [error/remove] {tgt_rel} :: Failed to delete")
-                    errors += 1
-                    continue
+        operation = e.get("operation", "copy").lower()
+
+        # Handle different operation types
+        if operation == "delete":
+            # Mod DELETED this file - need to RESTORE it from backup
+            if not tgt.exists():
+                # File was deleted by mod, try to restore it
                 b = find_latest_backup_for_filename(tgt.name, BACKUP_DIR)
                 if b and b.exists():
-                    shutil.copy2(b, tgt)
-                    log(f"  [restore] {b.name}  →  {tgt_rel}")
-                    restored += 1
+                    try:
+                        tgt.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(b, tgt)
+                        log(f"  [restore] {b.name}  →  {tgt_rel}")
+                        restored += 1
+                    except Exception as ex:
+                        log(f"  [error/restore] {tgt_rel} :: {ex}")
+                        errors += 1
                 else:
-                    log(f"  [no-backup] {tgt.name} (left removed)")
+                    log(f"  [no-backup] {tgt.name} (cannot restore deleted file)")
                     missing_backup += 1
-            except Exception as ex:
-                log(f"  [error/remove] {tgt_rel} :: {ex}")
-                errors += 1
-        else:
-            log(f"  [absent] {tgt_rel}")
-            not_present += 1
+            else:
+                # File exists but mod was supposed to delete it
+                # This shouldn't happen, but log it
+                log(f"  [unexpected] {tgt_rel} exists but mod should have deleted it")
+
+        else:  # operation == "copy" or default
+            # Mod COPIED this file - need to REMOVE it and restore original
+            if tgt.exists():
+                try:
+                    # Use safe deletion with symlink protection
+                    if safe_delete_path(tgt, allow_symlink_delete=False):
+                        log(f"  [remove] {tgt_rel}")
+                        removed += 1
+                    else:
+                        log(f"  [error/remove] {tgt_rel} :: Failed to delete")
+                        errors += 1
+                        continue
+
+                    # Try to restore backup of original file
+                    b = find_latest_backup_for_filename(tgt.name, BACKUP_DIR)
+                    if b and b.exists():
+                        shutil.copy2(b, tgt)
+                        log(f"  [restore] {b.name}  →  {tgt_rel}")
+                        restored += 1
+                    else:
+                        log(f"  [no-backup] {tgt.name} (left removed)")
+                        missing_backup += 1
+                except Exception as ex:
+                    log(f"  [error/remove] {tgt_rel} :: {ex}")
+                    errors += 1
+            else:
+                log(f"  [absent] {tgt_rel}")
+                not_present += 1
+
     log(
         f"[disable/done] removed={removed} restored={restored} no_backup={missing_backup} absent={not_present} errors={errors}"
     )
@@ -334,131 +500,6 @@ def find_conflicts(names=None):
     idx, manifests = build_mod_index(names)
     conflicts = {t: ms for t, ms in idx.items() if len(ms) > 1}
     return conflicts, manifests
-
-
-# --------------------
-# Restore points
-# --------------------
-def create_restore_point(base: Path, log):
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    rp = RESTORE_POINTS_DIR / ts
-    rp.mkdir(parents=True, exist_ok=True)
-    idx, _ = build_mod_index(config.enabled_mods)
-    for rel in idx.keys():
-        src = base / rel
-        if src.exists() and src.is_file():
-            dst = rp / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-    log(f"Restore point created: {rp.name}")
-    return rp.name
-
-
-def rollback_to_restore_point(name: str, base: Path, log):
-    rp = RESTORE_POINTS_DIR / name
-    if not rp.exists():
-        raise FileNotFoundError("Restore point not found.")
-    for p in rp.rglob("*"):
-        if p.is_file():
-            rel = p.relative_to(rp)
-            dst = base / rel.as_posix()
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(p, dst)
-    log(f"Rolled back to restore point: {name}")
-
-
-# --------------
-# Apply order
-# --------------
-def apply_enabled_mods_in_order(log):
-    base = config.target_path
-    if not base or not base.exists():
-        raise RuntimeError("No valid FM26 target set. Use Detect or Set Target.")
-
-    enabled = config.enabled_mods
-    enabled_set = set(enabled)
-    previously_applied = config.last_applied_mods
-
-    removed = []
-    for name in previously_applied:
-        if name in enabled_set:
-            continue
-        try:
-            disable_mod(name, log)
-            removed.append(name)
-        except FileNotFoundError:
-            log(f"[disable/skip] {name} not found on disk; skipping removal.")
-        except Exception as ex:
-            log(f"[WARN] Failed disabling {name}: {ex}")
-
-    order = config.load_order
-    ordered = [m for m in order if m in enabled] + [
-        m for m in enabled if m not in order
-    ]
-    if not ordered:
-        if removed:
-            log(f"Removed {len(removed)} mod(s) no longer enabled.")
-        config.last_applied_mods = []
-        log("No enabled mods to apply.")
-        return
-    rp = create_restore_point(base, log)
-    for name in ordered:
-        try:
-            enable_mod(name, log)
-        except Exception as ex:
-            log(f"[WARN] Failed enabling {name}: {ex}")
-    if removed:
-        log(f"Removed {len(removed)} mod(s) no longer enabled.")
-    log(
-        f"Applied {len(ordered)} mod(s) in order (last-write-wins). Restore point: {rp}"
-    )
-    config.last_applied_mods = ordered
-
-
-def delete_mod(mod_name: str, log):
-    """Delete selected mod from computer."""
-    name = self.selected_mod_name()
-    if not name:
-        messagebox.showinfo("Delete", "Select a mod first.")
-        return
-
-    if not messagebox.askyesno(
-            "Delete Mod",
-            f"Are you sure you want to permanently delete '{name}'?\n\nThis will remove the mod folder and all its files from your computer."
-        ):
-            return
-
-    try:
-        mod_dir = MODS_DIR / name
-        if mod_dir.exists():
-            # First disable the mod to remove files from game directories
-            try:
-                disable_mod(name, self._log)
-            except Exception as e:
-                self._log(f"Error disabling mod before deletion: {e}")
-
-            # Remove from enabled mods list
-            enabled = config.enabled_mods
-            if name in enabled:
-                enabled.remove(name)
-                config.enabled_mods = enabled
-
-            # Remove from load order
-            order = config.load_order
-            if name in order:
-                order.remove(name)
-                config.load_order = order
-
-            # Delete mod folder
-            safe_delete_path(mod_dir, allow_symlink_delete=False)
-            self._log(f"Deleted mod '{name}' from {MODS_DIR}")
-            self.refresh_mod_list()
-            messagebox.showinfo("Delete", f"Mod '{name}' has been permanently deleted.")
-        else:
-            messagebox.showerror("Delete Error", f"Mod '{name}' not found in {MODS_DIR}")
-    except Exception as e:
-        messagebox.showerror("Delete Error", f"Failed to delete mod: {e}")
-        self._log(f"Delete error for '{name}': {e}")
 
 
 # --------------------
@@ -738,7 +779,20 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             textvariable=self.type_filter,
             width=18,
             state="readonly",
-            values=["(all)", "ui", "skins", "database", "ruleset", "graphics", "audio", "tactics", "misc"],
+            values=[
+                "(all)",
+                "ui",
+                "bundle",
+                "camera",
+                "skins",
+                "graphics",
+                "tactics",
+                "database",
+                "ruleset",
+                "editor-data",
+                "audio",
+                "misc",
+            ],
         )
         self.type_combo.pack(side=tk.RIGHT, padx=6)
         ttk.Label(flt, text="Filter mod type:").pack(side=tk.RIGHT)
@@ -1164,6 +1218,78 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         )
         self.refresh_mod_list()
 
+    def on_delete_selected(self):
+        """Delete selected mod from computer."""
+        name = self.selected_mod_name()
+        if not name:
+            messagebox.showinfo("Delete", "Select a mod first.")
+            return
+
+        # SECURITY: Validate mod name doesn't contain path traversal sequences
+        if ".." in name or "/" in name or "\\" in name or name.startswith("."):
+            messagebox.showerror(
+                "Security Error",
+                f"Invalid mod name contains suspicious characters: {name}\n\n"
+                f"Mod names cannot contain:\n"
+                f"  • Path separators (/ or \\)\n"
+                f"  • Parent directory references (..)\n"
+                f"  • Leading dots (.)"
+            )
+            self._log(f"[SECURITY] Blocked deletion attempt with invalid mod name: {name}")
+            return
+
+        if not messagebox.askyesno(
+                "Delete Mod",
+                f"Are you sure you want to permanently delete '{name}'?\n\nThis will remove the mod folder and all its files from your computer."
+            ):
+                return
+
+        try:
+            mod_dir = MODS_DIR / name
+
+            # SECURITY: Validate mod_dir is actually within MODS_DIR (prevents path traversal)
+            try:
+                mod_dir.resolve().relative_to(MODS_DIR.resolve())
+            except ValueError:
+                messagebox.showerror(
+                    "Security Error",
+                    f"Security validation failed: mod path escapes mods directory.\n\n"
+                    f"Mod directory: {mod_dir}\n"
+                    f"Mods root: {MODS_DIR}\n\n"
+                    f"This should never happen with a legitimate mod."
+                )
+                self._log(f"[SECURITY] Blocked deletion - path escape attempt: {mod_dir}")
+                return
+            if mod_dir.exists():
+                # First disable the mod to remove files from game directories
+                try:
+                    disable_mod(name, self._log)
+                except Exception as e:
+                    self._log(f"Error disabling mod before deletion: {e}")
+
+                # Remove from enabled mods list
+                enabled = config.enabled_mods
+                if name in enabled:
+                    enabled.remove(name)
+                    config.enabled_mods = enabled
+
+                # Remove from load order
+                order = config.load_order
+                if name in order:
+                    order.remove(name)
+                    config.load_order = order
+
+                # Delete mod folder
+                safe_delete_path(mod_dir, allow_symlink_delete=False)
+                self._log(f"Deleted mod '{name}' from {MODS_DIR}")
+                self.refresh_mod_list()
+                messagebox.showinfo("Delete", f"Mod '{name}' has been permanently deleted.")
+            else:
+                messagebox.showerror("Delete Error", f"Mod '{name}' not found in {MODS_DIR}")
+        except Exception as e:
+            messagebox.showerror("Delete Error", f"Failed to delete mod: {e}")
+            self._log(f"Delete error for '{name}': {e}")
+
     def on_move_up(self):
         name = self.selected_mod_name()
         if not name:
@@ -1354,6 +1480,63 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             f"• Logs live in: {LOGS_DIR}\n"
         )
         messagebox.showinfo("Manifest format", txt)
+
+    def on_generate_template(self):
+        """Generate a mod template for developers."""
+        messagebox.showinfo(
+            "Generate Mod Template",
+            "Feature coming soon!\n\n"
+            "This will help you create a basic mod structure with:\n"
+            "• manifest.json template\n"
+            "• README.md\n"
+            "• Proper folder structure\n\n"
+            "For now, please refer to the Manifest Help (Actions menu) for manual setup."
+        )
+
+    def on_settings(self):
+        """Show application preferences dialog."""
+        messagebox.showinfo(
+            "Preferences",
+            "Settings dialog coming soon!\n\n"
+            "Future settings will include:\n"
+            "• Auto-update preferences\n"
+            "• Discord webhook configuration\n"
+            "• Theme customization\n"
+            "• Default mod installation options"
+        )
+
+    def on_about(self):
+        """Show about dialog with version information."""
+        about_text = (
+            f"FM Reloaded Mod Manager\n"
+            f"Version {VERSION}\n\n"
+            f"A comprehensive mod manager for Football Manager 26\n"
+            f"featuring BepInEx integration, mod store access,\n"
+            f"and streamlined mod deployment.\n\n"
+            f"GitHub: https://github.com/jo13310/FM_Reloaded\n"
+            f"Discord: Join our community for support!\n\n"
+            f"© 2025 FM Reloaded Project"
+        )
+        messagebox.showinfo("About FM Reloaded", about_text)
+
+    def on_report_bug(self):
+        """Open bug report page."""
+        try:
+            import webbrowser
+            webbrowser.open("https://github.com/jo13310/FM_Reloaded/issues/new")
+            self._log("Opened bug report page in browser")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open browser:\n{e}")
+
+    def on_submit_mod(self):
+        """Open mod submission page or form."""
+        try:
+            import webbrowser
+            # For now, open the GitHub discussions or a Discord invite
+            webbrowser.open("https://github.com/jo13310/FM_Reloaded/discussions")
+            self._log("Opened mod submission page in browser")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open browser:\n{e}")
 
     def on_select_row(self, _event):
         sel = self.tree.selection()
@@ -1724,6 +1907,27 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         else:
             messagebox.showinfo("BepInEx", "BepInEx folder not found.")
 
+    def refresh_bepinex_status(self):
+        """Update BepInEx installation status and UI elements."""
+        if not ENHANCED_FEATURES or not self.bepinex_manager:
+            self.bepinex_status_var.set("BepInEx features not available")
+            return
+
+        try:
+            if self.bepinex_manager.is_installed():
+                version = self.bepinex_manager.get_version()
+                self.bepinex_status_var.set(f"✓ BepInEx {version} installed")
+
+                # Update console checkbox to reflect current config
+                console_enabled = self.bepinex_manager.is_console_enabled()
+                self.bepinex_console_var.set(console_enabled)
+            else:
+                self.bepinex_status_var.set("✗ BepInEx not installed")
+                self.bepinex_console_var.set(False)
+        except Exception as e:
+            self.bepinex_status_var.set(f"Error checking status: {e}")
+            self._log(f"Error refreshing BepInEx status: {e}")
+
     # ---- Enhanced feature handlers ----
     def _auto_check_updates(self):
         """Silently check for updates on startup."""
@@ -1791,11 +1995,6 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
         ttk.Button(btn_frame, text="Download Update", command=open_download).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Later", command=win.destroy).pack(side=tk.LEFT, padx=5)
 
-    # ---- main ----
-    if __name__ == "__main__":
-        # macOS may print "Secure coding is not enabled..." warning for Tk — harmless.
-        app = App()
-        app.mainloop()
 
 
 # ---- main ----

@@ -92,7 +92,7 @@ Each mod in the store is represented as a JSON object:
 |-------|----------|-------------|
 | `name` | Yes | Mod display name (must match manifest.json) |
 | `version` | Yes | Latest version (semantic versioning) |
-| `type` | Yes | Mod category: ui, graphics, tactics, database, misc |
+| `type` | Yes | Mod category: ui, bundle, camera, skins, graphics, tactics, database, ruleset, editor-data, audio, misc |
 | `author` | Yes | Mod creator name |
 | `description` | Yes | 1-2 sentence summary (max 200 chars) |
 | `homepage` | Yes | GitHub repository URL |

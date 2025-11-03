@@ -1,0 +1,150 @@
+{
+  "name": "FM26 Open Names Pack",
+  "version": "1.1.0",
+  "type": "database",
+  "author": "Community Maintainers",
+  "homepage": "https://github.com/jo13310/NameFixFM26",
+  "description": "Community-maintained Football Manager 2026 real names data consolidated into a single open licence LNC file. Removes conflicting stock licensing files.",
+  "files": [
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/ac milan (wom).lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/acc Inter unlic 26.lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/acmilan unlic 26.lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/fake.lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/inter (wom).lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/inter unlic 26.lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/japanese names.lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/lazio (wom).lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/lic_dan_swe_fra.lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/licensing club name_fm26.lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/men lazio.lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/lnc/all/men.atalanta.lnc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/edt/permanent/fake.edt",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/1_japan_removed_clubs.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/brazil_kits.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/england.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/forbidden names.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/france.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/japan_fake.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/japan_unlicensed_random_names.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/j league non player.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/licensing_post_data_lock.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/licensing2.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/licensing26.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/permanent/netherlands.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/language/Licensing2.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "target_subpath": "shared/data/database/db/2600/dbc/language/Licensing2_chn.dbc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "source": "assets/lnc/FM26-open-names.lnc",
+      "target_subpath": "shared/data/database/db/2600/lnc/all/FM26-open-names.lnc",
+      "operation": "copy"
+    }
+  ]
+}

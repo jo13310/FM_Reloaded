@@ -14,18 +14,90 @@ import rarfile  # Note: Requires rarfile package and WinRAR/UnRAR
 import configparser
 from datetime import datetime
 
+# Import security utilities
+try:
+    from core.security_utils import (
+        is_protected_system_directory,
+        safe_delete_path,
+        safe_delete_with_boundary_check
+    )
+except ImportError:
+    # Fallback if module not available
+    def is_protected_system_directory(path: Path) -> bool:
+        """Fallback: basic system directory check."""
+        path_resolved = path.resolve()
+        # Protect exact matches
+        protected_exact = [
+            Path("C:\\Windows"), Path("C:\\Program Files"), Path("C:\\Program Files (x86)"),
+            Path("/System"), Path("/usr"), Path("/bin"),
+        ]
+        for sys_dir in protected_exact:
+            if sys_dir.exists() and path_resolved == sys_dir:
+                return True
+        # Allow deep subdirectories in Program Files (game installations)
+        pf_roots = [Path("C:\\Program Files"), Path("C:\\Program Files (x86)")]
+        for pf_root in pf_roots:
+            if pf_root.exists():
+                try:
+                    relative = path_resolved.relative_to(pf_root)
+                    if len(relative.parts) == 1:  # Direct child only
+                        return True
+                except ValueError:
+                    pass
+        return False
+
+    def safe_delete_path(path: Path, allow_symlink_delete: bool = False) -> bool:
+        """Fallback: basic safe delete."""
+        if not path.exists():
+            return False
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        return True
+
+    def safe_delete_with_boundary_check(
+        path: Path, allowed_root: Path, allow_symlink_delete: bool = False, require_whitelist: bool = True
+    ) -> bool:
+        """Fallback: basic boundary-checked delete."""
+        # Simple validation
+        path.resolve().relative_to(allowed_root.resolve())
+        return safe_delete_path(path, allow_symlink_delete)
+
 
 class BepInExManager:
     """Manages BepInEx installation and configuration for Football Manager 26."""
 
     def __init__(self, fm_install_dir: Path):
         """
-        Initialize BepInEx manager.
+        Initialize BepInEx manager with security validation.
 
         Args:
             fm_install_dir: Football Manager 26 installation directory
+
+        Raises:
+            ValueError: If fm_install_dir is invalid or in a protected system directory
         """
-        self.fm_install_dir = Path(fm_install_dir)
+        fm_install_dir = Path(fm_install_dir).resolve()
+
+        # SECURITY: Validate FM install directory exists
+        if not fm_install_dir.exists():
+            raise ValueError(
+                f"FM install directory does not exist: {fm_install_dir}\n"
+                f"Please verify the Football Manager 26 installation path."
+            )
+
+        if not fm_install_dir.is_dir():
+            raise ValueError(f"FM install path is not a directory: {fm_install_dir}")
+
+        # SECURITY: Prevent operations in system directories
+        if is_protected_system_directory(fm_install_dir):
+            raise ValueError(
+                f"Security: FM install directory cannot be a protected system directory: {fm_install_dir}\n"
+                f"This may indicate configuration file tampering or incorrect auto-detection."
+            )
+
+        self.fm_install_dir = fm_install_dir
         self.bepinex_dir = self.fm_install_dir / "BepInEx"
         self.config_file = self.bepinex_dir / "config" / "BepInEx.cfg"
         self.latest_log = self.bepinex_dir / "LogOutput.log"
@@ -144,13 +216,20 @@ class BepInExManager:
                     dest = self.fm_install_dir / item.name
                     if dest.exists():
                         if dest.is_dir():
-                            shutil.rmtree(dest)
+                            # SECURITY: Use safe delete with boundary check
+                            safe_delete_with_boundary_check(
+                                dest,
+                                self.fm_install_dir,
+                                allow_symlink_delete=False,
+                                require_whitelist=False  # FM install dir not in whitelist
+                            )
                         else:
                             dest.unlink()
                     shutil.move(str(item), str(dest))
 
                 log("Cleaning up temporary files...")
-                shutil.rmtree(temp_extract_dir)
+                # SECURITY: Use safe delete for temp directory
+                safe_delete_path(temp_extract_dir, allow_symlink_delete=False)
 
                 # Set default config (console disabled)
                 log("Configuring BepInEx...")
@@ -162,7 +241,11 @@ class BepInExManager:
             finally:
                 # Clean up temp directory
                 if temp_extract_dir.exists():
-                    shutil.rmtree(temp_extract_dir, ignore_errors=True)
+                    # SECURITY: Use safe delete for temp directory cleanup
+                    try:
+                        safe_delete_path(temp_extract_dir, allow_symlink_delete=False)
+                    except Exception:
+                        pass  # Ignore errors during cleanup
 
         except Exception as e:
             log(f"Installation failed: {e}")
@@ -238,7 +321,13 @@ class BepInExManager:
 
             # Remove BepInEx files
             if self.bepinex_dir.exists():
-                shutil.rmtree(self.bepinex_dir)
+                # SECURITY: Use safe delete with boundary check for uninstall
+                safe_delete_with_boundary_check(
+                    self.bepinex_dir,
+                    self.fm_install_dir,
+                    allow_symlink_delete=False,
+                    require_whitelist=False  # FM install dir not in whitelist
+                )
 
             # Remove loader files
             loader_files = [

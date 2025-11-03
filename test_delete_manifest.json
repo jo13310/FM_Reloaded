@@ -1,0 +1,19 @@
+{
+  "name": "Test Real Names Fix",
+  "version": "1.0.0",
+  "author": "Test Author",
+  "description": "Test mod to verify file deletion functionality",
+  "type": "data",
+  "files": [
+    {
+      "target_subpath": "data/database/db/1800/test_english.ltc",
+      "operation": "delete",
+      "backup": true
+    },
+    {
+      "source": "test-file.ltc",
+      "target_subpath": "data/database/db/1800/test_english.ltc",
+      "operation": "copy"
+    }
+  ]
+}

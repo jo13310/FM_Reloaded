@@ -9,6 +9,34 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Import security utilities
+try:
+    from core.security_utils import is_protected_system_directory
+except ImportError:
+    # Fallback if module not available
+    def is_protected_system_directory(path: Path) -> bool:
+        """Fallback: basic system directory check."""
+        path_resolved = path.resolve()
+        # Protect exact matches
+        protected_exact = [
+            Path("C:\\Windows"), Path("C:\\Program Files"), Path("C:\\Program Files (x86)"),
+            Path("/System"), Path("/usr"), Path("/bin"),
+        ]
+        for sys_dir in protected_exact:
+            if sys_dir.exists() and path_resolved == sys_dir:
+                return True
+        # Allow deep subdirectories in Program Files (game installations)
+        pf_roots = [Path("C:\\Program Files"), Path("C:\\Program Files (x86)")]
+        for pf_root in pf_roots:
+            if pf_root.exists():
+                try:
+                    relative = path_resolved.relative_to(pf_root)
+                    if len(relative.parts) == 1:  # Direct child only
+                        return True
+                except ValueError:
+                    pass
+        return False
+
 
 class ConfigManager:
     """Manages application configuration with caching."""
@@ -51,14 +79,74 @@ class ConfigManager:
     # Target path property
     @property
     def target_path(self) -> Optional[Path]:
-        """Get FM26 target installation path."""
+        """
+        Get FM26 target installation path with security validation.
+
+        Returns:
+            Validated path or None if not set
+
+        Raises:
+            ValueError: If path is in a protected system directory or invalid
+        """
         p = self._cache.get("target_path")
-        return Path(p) if p else None
+        if not p:
+            return None
+
+        path = Path(p).resolve()
+
+        # Security: Validate it's not a system directory
+        if is_protected_system_directory(path):
+            raise ValueError(
+                f"Security: target_path cannot be a protected system directory: {path}\n"
+                f"This may indicate configuration file tampering. "
+                f"Please re-detect or manually set a valid FM26 installation directory."
+            )
+
+        # Validate it exists and is a directory
+        if not path.exists():
+            # Don't raise error for non-existent paths, just return None
+            # This allows the user to fix it through the UI
+            return None
+
+        if not path.is_dir():
+            raise ValueError(
+                f"Invalid target_path: {path} exists but is not a directory"
+            )
+
+        return path
 
     @target_path.setter
     def target_path(self, path: Path):
-        """Set FM26 target installation path."""
-        self._cache["target_path"] = str(path)
+        """
+        Set FM26 target installation path with security validation.
+
+        Args:
+            path: Path to FM26 installation directory
+
+        Raises:
+            ValueError: If path is invalid or in protected system directory
+        """
+        if path is None:
+            self._cache["target_path"] = None
+            self.save()
+            return
+
+        path_resolved = Path(path).resolve()
+
+        # Security: Prevent setting system directories
+        if is_protected_system_directory(path_resolved):
+            raise ValueError(
+                f"Security: Cannot set target_path to protected system directory: {path_resolved}"
+            )
+
+        # Validate path exists
+        if not path_resolved.exists():
+            raise ValueError(f"Path does not exist: {path_resolved}")
+
+        if not path_resolved.is_dir():
+            raise ValueError(f"Path is not a directory: {path_resolved}")
+
+        self._cache["target_path"] = str(path_resolved)
         self.save()
 
     # Enabled mods property
