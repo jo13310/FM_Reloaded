@@ -8,7 +8,8 @@
       "Bash(python:*)",
       "Bash(pyinstaller:*)",
       "Bash(pip:*)",
-      "Bash(core/__init__.py)"
+      "Bash(core/__init__.py)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

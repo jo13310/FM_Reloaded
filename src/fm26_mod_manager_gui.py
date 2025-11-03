@@ -1747,6 +1747,28 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
                         f"Store entry for '{mod_name}' requires a manifest_url when release asset is not a ZIP."
                     )
                 manifest_data = self.mod_store_api.fetch_manifest(manifest_url)
+
+                # Convert cleanup arrays to delete operations (for compatibility with NameFix and similar mods)
+                if "cleanup" in manifest_data:
+                    cleanup_entries = manifest_data.pop("cleanup")
+                    files = manifest_data.setdefault("files", [])
+
+                    for cleanup_group in cleanup_entries:
+                        target_path = cleanup_group.get("target_path", "")
+                        remove_files = cleanup_group.get("remove_files", [])
+
+                        for filename in remove_files:
+                            # Combine target_path and filename to create full path
+                            full_path = target_path.rstrip("/") + "/" + filename
+                            # Add as delete operation
+                            files.append({
+                                "target_subpath": full_path,
+                                "operation": "delete",
+                                "backup": True
+                            })
+
+                    self._log(f"Converted {len(cleanup_entries)} cleanup groups to delete operations")
+
                 package_dir = Path(tempfile.mkdtemp(prefix="fm_package_"))
                 manifest_path = package_dir / "manifest.json"
                 manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1798,7 +1820,10 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
             threading.Thread(target=track_download, daemon=True).start()
 
         except Exception as e:
-            self.after(0, lambda: self._log(f"Install failed: {e}"))
+            # Capture exception message immediately to avoid lambda closure bug
+            error_msg = str(e)
+            self.after(0, lambda: self._log(f"Install failed: {error_msg}"))
+            self.after(0, lambda: messagebox.showerror("Install Failed", f"Failed to install mod:\n\n{error_msg}"))
 
     def on_store_details(self):
         """Show details for selected store mod."""
