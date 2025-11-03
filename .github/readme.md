@@ -238,8 +238,8 @@ Discord webhooks can be configured in **Settings** → **Preferences…**
 ## Credits
 
 ### Original Project
-**FM_Reloaded_26** (formerly FMLoader-26) was originally created by:
-- **[Justin Levine](https://justinlevine.me)** ([@notJalco](https://github.com/justinlevinedotme)) - Original creator
+**FM_Reloaded_26** (formerly FMMLoader-26) was originally created by:
+- **[Justin Levine](https://justinlevine.me)** ([@notJalco](https://github.com/justinlevinedotme/FMMLoader-26)) - Original creator
 
 
 ### Enhanced Version
