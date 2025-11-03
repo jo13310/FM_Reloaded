@@ -2,6 +2,10 @@
 
 <div align="center">
 
+<p align="center">
+  <img src="src/assets/fm_reloaded.png" alt="FM Reloaded Mod Manager logo" width="600" />
+</p>
+
 [![License](https://img.shields.io/badge/license-CC%20BY--SA%204.0-blue.svg)](https://creativecommons.org/licenses/by-sa/4.0/)
 [![Version](https://img.shields.io/badge/version-0.5.0-green.svg)]()
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-7289da?logo=discord&logoColor=white)]()
