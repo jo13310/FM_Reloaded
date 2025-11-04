@@ -10,7 +10,9 @@
       "Bash(pip:*)",
       "Bash(core/__init__.py)",
       "Bash(cat:*)",
-      "WebFetch(domain:api.github.com)"
+      "WebFetch(domain:api.github.com)",
+      "Bash(nul)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": [],
     "ask": []
