@@ -11,7 +11,19 @@ jobs:
     name: Build (${{ matrix.os }})
     strategy:
       matrix:
-        os: [windows-latest, macos-latest]
+        include:
+          - os: windows-latest
+            name: Windows
+            artifact_name: FM_Reloaded-Windows
+          - os: macos-latest
+            name: macOS (Apple Silicon)
+            artifact_name: FM_Reloaded-macOS-AppleSilicon
+          - os: macos-13
+            name: macOS (Intel)
+            artifact_name: FM_Reloaded-macOS-Intel
+          - os: ubuntu-latest
+            name: Linux
+            artifact_name: FM_Reloaded-Linux
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -96,26 +108,43 @@ jobs:
 
       # ---------- macOS ----------
       - name: Build with PyInstaller (macOS)
-        if: matrix.os == 'macos-latest'
+        if: startsWith(matrix.os, 'macos')
         shell: bash
         run: |
           cd src
           pyinstaller --clean --noconfirm fm26_mod_manager.spec
 
       - name: Package artifact (macOS)
-        if: matrix.os == 'macos-latest'
+        if: startsWith(matrix.os, 'macos')
         shell: bash
         run: |
           mkdir -p upload
           cd src/dist
-          zip -r "../../upload/FM_Reloaded-macOS.zip" "FM_Reloaded.app"
+          zip -r "../../upload/${{ matrix.artifact_name }}.zip" "FM_Reloaded.app"
+          cd ../..
+
+      # ---------- Linux ----------
+      - name: Build with PyInstaller (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          cd src
+          pyinstaller --clean --noconfirm --onefile --name "FM_Reloaded" fm26_mod_manager.spec
+
+      - name: Package artifact (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          mkdir -p upload
+          cd src/dist
+          tar -czf "../../upload/${{ matrix.artifact_name }}.tar.gz" "FM_Reloaded"
           cd ../..
 
       # ---------- Upload ----------
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os == 'windows-latest' && 'FM_Reloaded-Windows' || 'FM_Reloaded-macOS' }}
+          name: ${{ matrix.artifact_name }}
           path: upload/*
 
   release:
@@ -137,24 +166,42 @@ jobs:
           path: artifacts/windows
         continue-on-error: true
 
-      - name: Download macOS artifact
+      - name: Download macOS (Apple Silicon) artifact
         uses: actions/download-artifact@v4
         with:
-          name: FM_Reloaded-macOS
-          path: artifacts/macos
+          name: FM_Reloaded-macOS-AppleSilicon
+          path: artifacts/macos-arm
+        continue-on-error: true
+
+      - name: Download macOS (Intel) artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: FM_Reloaded-macOS-Intel
+          path: artifacts/macos-intel
+        continue-on-error: true
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: FM_Reloaded-Linux
+          path: artifacts/linux
         continue-on-error: true
 
       - name: List downloaded files
         run: |
           echo "Windows artifacts :"; ls -lah artifacts/windows || true
-          echo "macOS artifacts :";   ls -lah artifacts/macos || true
+          echo "macOS (Apple Silicon) artifacts :";   ls -lah artifacts/macos-arm || true
+          echo "macOS (Intel) artifacts :";   ls -lah artifacts/macos-intel || true
+          echo "Linux artifacts :";   ls -lah artifacts/linux || true
 
       - name: Create/Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/windows/FM_Reloaded.exe
-            artifacts/macos/FM_Reloaded-macOS.zip
+            artifacts/macos-arm/FM_Reloaded-macOS-AppleSilicon.zip
+            artifacts/macos-intel/FM_Reloaded-macOS-Intel.zip
+            artifacts/linux/FM_Reloaded-Linux.tar.gz
           draft: false
           prerelease: false
         env:

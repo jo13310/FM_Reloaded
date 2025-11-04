@@ -16,7 +16,7 @@ def _platform_tag() -> str:
         return "windows"
     if sys.platform == "darwin":
         return "mac"
-    return "other"
+    return "linux"
 
 
 def default_candidates() -> List[Path]:
@@ -48,17 +48,49 @@ def default_candidates() -> List[Path]:
                 if p.exists():
                     out.append(p)
     else:
-        # macOS: Steam + Epic Games
-        for p in (
-            home
-            / "Library/Application Support/Steam/steamapps/common/Football Manager 26/fm.app/Contents/Resources/Data/StreamingAssets/aa/StandaloneOSX",
-            home
-            / "Library/Application Support/Steam/steamapps/common/Football Manager 26/fm_Data/StreamingAssets/aa/StandaloneOSXUniversal",
-            home
-            / "Library/Application Support/Epic/Football Manager 26/fm_Data/StreamingAssets/aa/StandaloneOSXUniversal",
-        ):
-            if p.exists():
-                out.append(p)
+        # Linux and macOS installations
+        if sys.platform == "darwin":
+            # macOS: Steam + Epic Games
+            for p in (
+                home
+                / "Library/Application Support/Steam/steamapps/common/Football Manager 26/fm.app/Contents/Resources/Data/StreamingAssets/aa/StandaloneOSX",
+                home
+                / "Library/Application Support/Steam/steamapps/common/Football Manager 26/fm_Data/StreamingAssets/aa/StandaloneOSXUniversal",
+                home
+                / "Library/Application Support/Epic/Football Manager 26/fm_Data/StreamingAssets/aa/StandaloneOSXUniversal",
+            ):
+                if p.exists():
+                    out.append(p)
+        else:
+            # Linux: Steam + Epic Games
+            # Steam locations
+            steam_home = home / ".steam/steam"
+            steam_flatpak = home / ".var/app/com.valvesoftware.Steam/data/Steam"
+            
+            for steam_base in [steam_home, steam_flatpak]:
+                if steam_base.exists():
+                    steam_library = steam_base / "steamapps/common/Football Manager 26"
+                    for sub in [
+                        "fm_Data/StreamingAssets/aa/StandaloneLinux64",
+                        "data/StreamingAssets/aa/StandaloneLinux64",
+                    ]:
+                        path = steam_library / sub
+                        if path.exists():
+                            out.append(path)
+            
+            # Epic Games Launcher location on Linux
+            epic_home = home / ".local/share/Steam/steamapps/common/Football Manager 26"
+            epic_alternative = home / ".config/legendary"
+            
+            for epic_base in [epic_home, epic_alternative]:
+                if epic_base.exists():
+                    for sub in [
+                        "fm_Data/StreamingAssets/aa/StandaloneLinux64",
+                        "data/StreamingAssets/aa/StandaloneLinux64",
+                    ]:
+                        path = epic_base / sub
+                        if path.exists():
+                            out.append(path)
 
     return out
 
@@ -82,15 +114,26 @@ def fm_user_dir() -> Path:
 
     Windows: Documents/Sports Interactive/Football Manager 26
     macOS: ~/Library/Application Support/Sports Interactive/Football Manager 26
+    Linux: ~/.local/share/Steam/steamapps/common/Football Manager 26 or ~/Documents/Sports Interactive/Football Manager 26
     """
     if sys.platform.startswith("win"):
         return Path.home() / "Documents" / "Sports Interactive" / "Football Manager 26"
-    else:
+    elif sys.platform == "darwin":
         # macOS
         return (
             Path.home()
             / "Library/Application Support/Sports Interactive/Football Manager 26"
         )
+    else:
+        # Linux - try Steam path first, then fallback to Documents
+        steam_user_dir = Path.home() / ".local/share/Steam/steamapps/common/Football Manager 26"
+        documents_dir = Path.home() / "Documents" / "Sports Interactive" / "Football Manager 26"
+        
+        # Prefer Steam path if it exists, otherwise use Documents
+        if steam_user_dir.exists():
+            return steam_user_dir
+        else:
+            return documents_dir
 
 
 def _game_root_from_target(base: Path) -> Path:

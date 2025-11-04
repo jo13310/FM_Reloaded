@@ -47,6 +47,8 @@ try:
     from discord_webhook import DiscordChannels
     from bepinex_manager import BepInExManager, find_fm_install_dir
     from app_updater import AppUpdater
+    from installation_wizard import show_manual_install_wizard
+    from platform_detector import detect_fm_installations, get_best_installation
     ENHANCED_FEATURES = True
 except ImportError as e:
     print(f"Warning: Enhanced features unavailable: {e}")
@@ -116,6 +118,7 @@ def safe_open_path(path: Path):
         elif sys.platform == "darwin":
             subprocess.run(["open", str(target)], check=False)
         else:
+            # Linux and other Unix-like systems
             subprocess.run(["xdg-open", str(target)], check=False)
     except Exception as e:
         messagebox.showerror("Open Error", f"Could not open:\n{path}\n\n{e}")
@@ -1230,6 +1233,53 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
                     src_folder = subs[0] if subs else temp_dir
             else:
                 src_folder = choice
+
+            # Check if manifest exists
+            has_manifest = (src_folder / "manifest.json").exists()
+            
+            if not has_manifest:
+                # Show manual installation wizard
+                if ENHANCED_FEATURES:
+                    self._log("No manifest found, showing manual installation wizard...")
+                    manifest = show_manual_install_wizard(self, choice, None)
+                    if manifest:
+                        # Create mod folder with generated manifest
+                        mod_name = manifest.get("name", "Imported Mod")
+                        mod_folder = MODS_DIR / mod_name
+                        mod_folder.mkdir(parents=True, exist_ok=True)
+                        
+                        # Write generated manifest
+                        (mod_folder / "manifest.json").write_text(
+                            json.dumps(manifest, indent=2), encoding="utf-8"
+                        )
+                        
+                        # Extract/copy mod files
+                        if choice.is_file() and choice.suffix.lower() == ".zip":
+                            safe_extract_zip(choice, mod_folder)
+                        else:
+                            shutil.copytree(src_folder, mod_folder / "files", dirs_exist_ok=True)
+                        
+                        # Update load order
+                        order = config.load_order
+                        if mod_name not in order:
+                            order.append(mod_name)
+                            config.load_order = order
+                        
+                        self.refresh_mod_list()
+                        messagebox.showinfo("Import", f"Successfully imported '{mod_name}' with generated manifest.")
+                        self._log(f"Manual installation completed for '{mod_name}'")
+                    else:
+                        self._log("Manual installation cancelled by user")
+                else:
+                    messagebox.showerror(
+                        "Import Error", 
+                        "No manifest.json found in the selected mod.\n\n"
+                        "This mod cannot be imported without a manifest.\n"
+                        "Please contact the mod author or use the enhanced version of FM Reloaded."
+                    )
+                return
+            
+            # Normal import with existing manifest
             newname = install_mod_from_folder(src_folder, None, log=self._log)
             order = config.load_order
             if newname not in order:
@@ -1240,6 +1290,7 @@ class App(ttk.Window if TTKBOOTSTRAP_AVAILABLE else tk.Tk):
 
         except Exception as e:
             messagebox.showerror("Import Error", str(e))
+            self._log(f"Import error: {e}")
         finally:
             if temp_dir:
                 # Safe cleanup of temporary directory

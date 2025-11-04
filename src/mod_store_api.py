@@ -15,6 +15,14 @@ from datetime import datetime, timedelta
 import tempfile
 import shutil
 
+# Import enhanced platform detection
+try:
+    from platform_detector import get_cache_dir
+except ImportError:
+    # Fallback if platform_detector not available
+    def get_cache_dir():
+        return Path(tempfile.gettempdir()) / "fm_reloaded_cache"
+
 # Default store configuration
 DEFAULT_STORE_URL = "https://raw.githubusercontent.com/jo13310/FM_Reloaded_Trusted_Store/main/mods.json"
 CACHE_DURATION_MINUTES = 1
@@ -30,10 +38,10 @@ class ModStoreAPI:
 
         Args:
             store_url: URL to the mods.json index file
-            cache_dir: Directory to cache store data (defaults to temp)
+            cache_dir: Directory to cache store data (defaults to platform-appropriate location)
         """
         self.store_url = store_url
-        self.cache_dir = cache_dir or Path(tempfile.gettempdir()) / "fm_reloaded_cache"
+        self.cache_dir = cache_dir or get_cache_dir()
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_file = self.cache_dir / "store_cache.json"
         self._cache: Optional[Dict] = None

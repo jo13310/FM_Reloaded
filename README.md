@@ -30,7 +30,7 @@ FM Reloaded Mod Manager is a powerful, user-friendly tool for managing your Foot
 ## Features
 
 ### Core Features
-- **Cross-Platform**: Runs on Windows and macOS
+- **Cross-Platform**: Runs on Windows, macOS, and Linux
 - **Automatic FM Folder Detection**: Finds your FM installation automatically
 - **Easy Mod Import**: Drag & drop .zip files or folders
 - **Instant Enable/Disable**: One-click mod management with immediate apply
@@ -68,6 +68,13 @@ FM Reloaded Mod Manager is a powerful, user-friendly tool for managing your Foot
 3. Control+Click → "Open" to bypass Gatekeeper
 4. If prompted, go to System Preferences → Privacy & Security → "Open Anyway"
 
+### Linux
+1. Download `FM_Reloaded-Linux.tar.gz` from [Releases](../../releases)
+2. Extract the archive: `tar -xzf FM_Reloaded-Linux.tar.gz`
+3. Run the executable: `./FM_Reloaded`
+4. Make executable if needed: `chmod +x FM_Reloaded`
+5. For easy access, create a desktop shortcut or move to `/usr/local/bin/`
+
 ---
 
 ## Usage
@@ -80,6 +87,8 @@ FM Reloaded Mod Manager is a powerful, user-friendly tool for managing your Foot
    - If auto-detection fails, click "Set…" to manually select:
      - **Windows (Steam)**: `C:\Program Files (x86)\Steam\steamapps\common\Football Manager 26\fm_Data\StreamingAssets\aa\StandaloneWindows64`
      - **macOS (Steam)**: `~/Library/Application Support/Steam/steamapps/common/Football Manager 26/fm.app/Contents/Resources/Data/StreamingAssets/aa/StandaloneOSX`
+     - **Linux (Steam)**: `~/.steam/steam/steamapps/common/Football Manager 26/fm_Data/StreamingAssets/aa/StandaloneLinux64`
+     - **Linux (Flatpak)**: `~/.var/app/com.valvesoftware.Steam/data/Steam/steamapps/common/Football Manager 26/fm_Data/StreamingAssets/aa/StandaloneLinux64`
 
 2. **Install Mods**
    - **From File**: Click "Import Mod…" → Select .zip or folder
@@ -313,6 +322,7 @@ FM_Reloaded/
 Configuration and mod data are stored in:
 - **Windows**: `%APPDATA%\FM_Reloaded_26\`
 - **macOS**: `~/Library/Application Support/FM_Reloaded_26/`
+- **Linux**: `~/.local/share/FM_Reloaded_26/`
 
 Contains:
 - `config.json` - App configuration

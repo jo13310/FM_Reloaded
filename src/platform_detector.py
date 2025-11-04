@@ -17,7 +17,25 @@ def _platform_tag() -> str:
         return "windows"
     if sys.platform == "darwin":
         return "mac"
-    return "other"
+    return "linux"
+
+
+def _get_mac_architecture() -> str:
+    """Detect Mac architecture (Intel vs Apple Silicon)."""
+    if sys.platform != "darwin":
+        return "unknown"
+    
+    try:
+        import platform
+        machine = platform.machine().lower()
+        if machine in ("x86_64", "i386"):
+            return "intel"
+        elif machine in ("arm64",):
+            return "apple_silicon"
+        else:
+            return "unknown"
+    except Exception:
+        return "unknown"
 
 
 def get_cache_dir() -> Path:
@@ -116,6 +134,54 @@ def enhanced_default_candidates() -> List[Dict[str, str]]:
                     "platform": "macOS",
                     "base_path": epic_library
                 })
+    
+    else:
+        # Linux installations
+        # Steam locations
+        steam_home = home / ".steam/steam"
+        steam_flatpak = home / ".var/app/com.valvesoftware.Steam/data/Steam"
+        
+        # Try multiple Steam installation paths
+        for steam_base in [steam_home, steam_flatpak]:
+            if not steam_base.exists():
+                continue
+                
+            steam_library = steam_base / "steamapps/common/Football Manager 26"
+            
+            # Steam candidates
+            for sub in [
+                "fm_Data/StreamingAssets/aa/StandaloneLinux64",
+                "data/StreamingAssets/aa/StandaloneLinux64",
+            ]:
+                path = steam_library / sub
+                if path.exists():
+                    candidates.append({
+                        "path": path,
+                        "source": "Steam",
+                        "platform": "Linux",
+                        "base_path": steam_library
+                    })
+        
+        # Epic Games Launcher location on Linux
+        epic_home = home / ".local/share/Steam/steamapps/common/Football Manager 26"
+        epic_alternative = home / ".config/legendary"
+        
+        for epic_base in [epic_home, epic_alternative]:
+            if not epic_base.exists():
+                continue
+                
+            for sub in [
+                "fm_Data/StreamingAssets/aa/StandaloneLinux64",
+                "data/StreamingAssets/aa/StandaloneLinux64",
+            ]:
+                path = epic_base / sub
+                if path.exists():
+                    candidates.append({
+                        "path": path,
+                        "source": "Epic Games",
+                        "platform": "Linux",
+                        "base_path": epic_base
+                    })
     
     # Custom installations - scan common locations
     custom_paths = _find_custom_installations()
