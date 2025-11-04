@@ -438,3 +438,5 @@ See [LICENSE](LICENSE) for full details.
 ---
 
 Made with ❤️ for the Football Manager community
+
+> ⚠️ **Warning:** This project is still a work in progress. Verify everything for yourself before use—I’m not responsible if anything goes wrong.
