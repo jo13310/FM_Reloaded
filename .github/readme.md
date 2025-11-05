@@ -129,7 +129,7 @@ C:\Program Files (x86)\Steam\steamapps\common\Football Manager 26\fm_Data\Stream
 ### 3 - Enable / Disable
 
 - Select a mod and click **Enable (mark)** or **Disable (unmark)**.
-- Enabled mods show **`yes`** in the "Enabled" column.
+- Enabled mods show **`Enabled`** in the "Status" column.
 - Disabled mods remain in `%APPDATA%/FM_Reloaded_26/mods/` (or the macOS equivalent) so you can re-enable them later.
 
 ---
